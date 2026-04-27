@@ -1,0 +1,20 @@
+# Build artifacts
+src/floater
+build/
+*.app/
+*.icns
+
+# Runtime data — never commit
+state.json
+*.log
+.env
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# tmp
+/tmp/AppIcon.iconset/
