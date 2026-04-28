@@ -3,7 +3,7 @@
 EVA NERV-styled macOS desktop HUD that shows your current Anthropic API rate-limit usage in real time. Auto-starts at login, gets out of the way when you don't need it.
 
 ![max view](docs/screenshots/max.png)
-<!-- ![min view](docs/screenshots/min.png) -->
+![min view](docs/screenshots/min.png)
 
 ## What it shows
 
