@@ -19,9 +19,10 @@ iconutil -c icns /tmp/AppIcon.iconset -o /tmp/AppIcon.icns
 
 echo "[3/4] assembling $APP_NAME.app ..."
 rm -rf "$APP_DIR"
-mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
+mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources/Fonts"
 cp /tmp/claude-floater-bin "$BIN"
 cp /tmp/AppIcon.icns "$APP_DIR/Contents/Resources/AppIcon.icns"
+cp "$REPO/src/fonts/"*.ttf "$APP_DIR/Contents/Resources/Fonts/"
 
 cat > "$APP_DIR/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -39,6 +40,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<EOF
     <key>LSMinimumSystemVersion</key>        <string>13.0</string>
     <key>LSUIElement</key>                   <true/>
     <key>NSHighResolutionCapable</key>       <true/>
+    <key>ATSApplicationFontsPath</key>       <string>Fonts/</string>
 </dict>
 </plist>
 EOF

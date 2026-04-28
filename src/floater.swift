@@ -74,6 +74,8 @@ func minchoLight(_ size: CGFloat) -> Font { Font.custom("HiraMinProN-W3", size: 
 func mono(_ size: CGFloat, _ weight: Font.Weight = .bold) -> Font {
     .system(size: size, weight: weight, design: .monospaced)
 }
+// 7-segment LCD digits (DSEG7 Classic Bold, bundled in Resources/Fonts).
+func lcd(_ size: CGFloat) -> Font { Font.custom("DSEG7Classic-Bold", size: size) }
 
 func severity(_ util: Double) -> Color {
     switch util {
@@ -247,11 +249,11 @@ struct MetricRow: View {
                     .fixedSize()
                 Spacer(minLength: 4)
                 Text(fmtRemaining(resetAt, now: now))
-                    .font(mincho(11))
+                    .font(lcd(10))
                     .foregroundStyle(Color(white: 0.5))
                     .fixedSize()
                 Text(String(format: "%05.1f%%", util * 100))
-                    .font(mincho(16))
+                    .font(lcd(13))
                     .foregroundStyle(severity(util))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
@@ -306,10 +308,16 @@ struct MaxView: View {
                     Spacer(minLength: 6)
                     if let s = loader.state {
                         let age = max(0, Int(loader.now.timeIntervalSince1970) - s.fetched_at)
-                        Text("\(age)秒前")
-                            .font(mincho(10))
-                            .foregroundStyle(Color.white.opacity(0.7))
-                            .fixedSize()
+                        HStack(spacing: 2) {
+                            Text("\(age)")
+                                .font(lcd(10))
+                                .foregroundStyle(Color.white.opacity(0.7))
+                                .fixedSize()
+                            Text("秒前")
+                                .font(mincho(10))
+                                .foregroundStyle(Color.white.opacity(0.7))
+                                .fixedSize()
+                        }
                     }
                     Text("◥")
                         .font(.system(size: 14, weight: .black))
@@ -392,7 +400,7 @@ struct MinView: View {
 
     var body: some View {
         let util = loader.state?.five_hour.utilization ?? 0
-        let remaining = max(0, 1 - util)
+        let remaining = max(0, min(100, Int((1 - util) * 100 + 0.5)))
         return HStack(spacing: 4) {
             Text("理論限界")
                 .font(mincho(13))
@@ -400,10 +408,9 @@ struct MinView: View {
                 .tracking(1)
                 .fixedSize()
             Spacer(minLength: 2)
-            Text(String(format: "%.0f%%", remaining * 100))
-                .font(mincho(13))
+            Text(String(format: "%03d", remaining))
+                .font(lcd(13))
                 .foregroundStyle(severity(util))
-                .monospacedDigit()
                 .fixedSize()
         }
         .padding(EdgeInsets(top: 4, leading: 17, bottom: 4, trailing: 8))
