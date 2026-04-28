@@ -8,6 +8,9 @@ APP_NAME="ClaudeFloater"
 APP_DIR="/Applications/$APP_NAME.app"
 BIN="$APP_DIR/Contents/MacOS/$APP_NAME"
 BUNDLE_ID="${CLAUDE_FLOATER_BUNDLE_ID:-dev.eva.claudefloater}"
+# Version resolution: explicit env > CI tag (GITHUB_REF_NAME on tag push) > fallback
+VERSION="${CLAUDE_FLOATER_VERSION:-${GITHUB_REF_NAME:-0.1.1}}"
+VERSION="${VERSION#v}"  # strip leading v if any
 
 echo "[1/4] compiling floater.swift ..."
 cd "$REPO/src"
@@ -33,8 +36,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<EOF
     <key>CFBundleIdentifier</key>            <string>$BUNDLE_ID</string>
     <key>CFBundleName</key>                  <string>Claude Floater</string>
     <key>CFBundleDisplayName</key>           <string>クロード稼働率</string>
-    <key>CFBundleVersion</key>               <string>1.0</string>
-    <key>CFBundleShortVersionString</key>    <string>1.0</string>
+    <key>CFBundleVersion</key>               <string>$VERSION</string>
+    <key>CFBundleShortVersionString</key>    <string>$VERSION</string>
     <key>CFBundlePackageType</key>           <string>APPL</string>
     <key>CFBundleIconFile</key>              <string>AppIcon</string>
     <key>LSMinimumSystemVersion</key>        <string>13.0</string>
