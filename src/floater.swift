@@ -257,7 +257,7 @@ struct MetricRow: View {
                     .foregroundStyle(severity(util))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
-                    .overlay(Rectangle().stroke(Color(white: 0.55).opacity(0.55), lineWidth: 1))
+                    .overlay(Rectangle().stroke(Color.white.opacity(0.85), lineWidth: 1))
                     .fixedSize()
             }
             GeometryReader { g in
@@ -277,7 +277,7 @@ struct MetricRow: View {
                         }
                     }
                 )
-                .overlay(Rectangle().stroke(Color.white.opacity(0.45), lineWidth: 1))
+                .overlay(Rectangle().stroke(Color(white: 0.75).opacity(0.55), lineWidth: 1))
             }
             .frame(height: 8)
         }
@@ -292,7 +292,7 @@ struct MaxView: View {
         VStack(spacing: 0) {
                 HStack(spacing: 8) {
                     Text("NERV")
-                        .font(mincho(15))
+                        .font(.custom("HiraMinProN-W6", size: 15).weight(.black))
                         .foregroundStyle(.white)
                         .tracking(2)
                         .fixedSize()
@@ -301,7 +301,7 @@ struct MaxView: View {
                         .foregroundStyle(Color.white.opacity(0.55))
                         .fixedSize()
                     Text("クロード")
-                        .font(mincho(15))
+                        .font(.custom("HiraMinProN-W6", size: 15).weight(.black))
                         .foregroundStyle(.white)
                         .tracking(2)
                         .fixedSize()
@@ -319,11 +319,17 @@ struct MaxView: View {
                                 .fixedSize()
                         }
                     }
-                    Text("◥")
-                        .font(.system(size: 14, weight: .black))
-                        .foregroundStyle(Eva.amber)
-                        .frame(width: 18, height: 16)
-                        .padding(.trailing, 4)
+                    // 最小化按钮：白色细线方框内嵌一根短横，比黄色三角更克制、更仪表化
+                    ZStack {
+                        Rectangle()
+                            .stroke(Color.white.opacity(0.85), lineWidth: 1)
+                            .frame(width: 14, height: 14)
+                        Rectangle()
+                            .fill(Color.white.opacity(0.85))
+                            .frame(width: 8, height: 1.5)
+                    }
+                    .frame(width: 18, height: 16)
+                    .padding(.trailing, 4)
                 }
                 .padding(.bottom, 14)
 
@@ -360,10 +366,14 @@ struct MaxView: View {
             .frame(maxHeight: .infinity, alignment: .top)
             .allowsHitTesting(false)
         )
-        .background(.ultraThinMaterial, in: EvaPanel(cut: 14))
+        .background(
+            EvaPanel(cut: 14)
+                .fill(.ultraThinMaterial)
+                .opacity(0.55)
+        )
         .overlay(
             EvaPanel(cut: 14)
-                .fill(Color.white.opacity(0.04))
+                .fill(Color.white.opacity(0.03))
                 .allowsHitTesting(false)
         )
         .overlay(
