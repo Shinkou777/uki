@@ -122,7 +122,8 @@ struct EvaPanel: Shape {
     }
 }
 
-// Diagonal hazard stripes filling a right triangle that sits in the cut-away corner.
+// Solid red triangle that sits in a cut-away corner. Doubles as a click target
+// (the bottom-right one is wired up as a minimize hot zone).
 struct HazardCorner: View {
     var size: CGFloat
     var rotated: Bool = false  // true = bottom-right corner
@@ -135,21 +136,7 @@ struct HazardCorner: View {
                 p.addLine(to: CGPoint(x: 0, y: h))
                 p.closeSubpath()
             }
-            ctx.clip(to: tri)
-            let stripe: CGFloat = 4
-            let gap: CGFloat = 3
-            var x: CGFloat = -h
-            while x < w + h {
-                let path = Path { p in
-                    p.move(to: CGPoint(x: x, y: 0))
-                    p.addLine(to: CGPoint(x: x + stripe, y: 0))
-                    p.addLine(to: CGPoint(x: x + stripe + h, y: h))
-                    p.addLine(to: CGPoint(x: x + h, y: h))
-                    p.closeSubpath()
-                }
-                ctx.fill(path, with: .color(Eva.red))
-                x += stripe + gap
-            }
+            ctx.fill(tri, with: .color(Eva.red))
         }
         .frame(width: size, height: size)
         .rotationEffect(.degrees(rotated ? 180 : 0))
@@ -525,7 +512,7 @@ final class InputContainer: NSView {
 // (toggle min, expand max) based on click location and model state.
 final class PanelInputView: NSView {
     weak var model: AppModel?
-    var toggleButtonHotZone: NSRect = .zero  // in view-local bottom-up coords
+    var toggleHotZones: [NSRect] = []  // view-local bottom-up coords; any rect = minimize
 
     private var initialMouse: NSPoint?
     private var initialOrigin: NSPoint?
@@ -556,9 +543,9 @@ final class PanelInputView: NSView {
         let loc = convert(event.locationInWindow, from: nil)
         let dragged = didDrag
         let mini = model?.minimized ?? false
-        let inHot = toggleButtonHotZone.contains(loc)
-        NSLog("[floater] mouseUp loc=(%.1f,%.1f) hot=%@ dragged=%d mini=%d inHot=%d",
-              loc.x, loc.y, NSStringFromRect(toggleButtonHotZone), dragged, mini, inHot)
+        let inHot = toggleHotZones.contains(where: { $0.contains(loc) })
+        NSLog("[floater] mouseUp loc=(%.1f,%.1f) zones=%d dragged=%d mini=%d inHot=%d",
+              loc.x, loc.y, toggleHotZones.count, dragged, mini, inHot)
         defer {
             initialMouse = nil
             initialOrigin = nil
@@ -698,6 +685,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let maxSize = NSSize(width: 290, height: 178)
     let minSize = NSSize(width: 116, height: 28)
 
+    // Hot zones for "minimize" while in MAX form: top-right square button + bottom-right red corner.
+    static func maxHotZones(for size: NSSize) -> [NSRect] {
+        return [
+            NSRect(x: size.width - 50, y: size.height - 50, width: 46, height: 44),  // top-right ▢
+            NSRect(x: size.width - 36, y: 0, width: 36, height: 32),                 // bottom-right ▼
+        ]
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         let host = NSHostingView(rootView: RootView(loader: loader, model: model))
         host.autoresizingMask = [.width, .height]
@@ -735,10 +730,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         p.makeKeyAndOrderFront(nil)
         self.panel = p
 
-        // ▼ hot zone — generous box covering the visual button area in the top-right
-        inputView.toggleButtonHotZone = NSRect(
-            x: maxSize.width - 50, y: maxSize.height - 50, width: 46, height: 44
-        )
+        inputView.toggleHotZones = AppDelegate.maxHotZones(for: maxSize)
 
         cancellable = model.$minimized.sink { [weak self] mini in
             guard let self else { return }
@@ -771,9 +763,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 self.panel.setFrame(NSRect(origin: newOrigin, size: target), display: true, animate: false)
                 if !mini {
-                    self.inputView.toggleButtonHotZone = NSRect(
-                        x: target.width - 50, y: target.height - 50, width: 46, height: 44
-                    )
+                    self.inputView.toggleHotZones = AppDelegate.maxHotZones(for: target)
                 }
             }
         }
