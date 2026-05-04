@@ -293,6 +293,16 @@ struct MaxView: View {
                         .tracking(2)
                         .fixedSize()
                     Spacer(minLength: 6)
+                    // 更新ボタン：白线方框内置「更」字，与最小化按钮的方框造型呼应
+                    ZStack {
+                        Rectangle()
+                            .stroke(Color.white.opacity(0.85), lineWidth: 1)
+                            .frame(width: 14, height: 14)
+                        Text("更")
+                            .font(.custom("HiraMinProN-W6", size: 10))
+                            .foregroundStyle(Color.white.opacity(0.85))
+                    }
+                    .frame(width: 18, height: 16)
                     if let s = loader.state {
                         let age = max(0, Int(loader.now.timeIntervalSince1970) - s.fetched_at)
                         HStack(spacing: 2) {
@@ -513,6 +523,8 @@ final class InputContainer: NSView {
 final class PanelInputView: NSView {
     weak var model: AppModel?
     var toggleHotZones: [NSRect] = []  // view-local bottom-up coords; any rect = minimize
+    var refreshHotZones: [NSRect] = [] // view-local bottom-up coords; any rect = force refresh
+    var onRefresh: (() -> Void)?
 
     private var initialMouse: NSPoint?
     private var initialOrigin: NSPoint?
@@ -544,8 +556,9 @@ final class PanelInputView: NSView {
         let dragged = didDrag
         let mini = model?.minimized ?? false
         let inHot = toggleHotZones.contains(where: { $0.contains(loc) })
-        NSLog("[floater] mouseUp loc=(%.1f,%.1f) zones=%d dragged=%d mini=%d inHot=%d",
-              loc.x, loc.y, toggleHotZones.count, dragged, mini, inHot)
+        let inRefresh = refreshHotZones.contains(where: { $0.contains(loc) })
+        NSLog("[floater] mouseUp loc=(%.1f,%.1f) toggleZones=%d refreshZones=%d dragged=%d mini=%d inHot=%d inRefresh=%d",
+              loc.x, loc.y, toggleHotZones.count, refreshHotZones.count, dragged, mini, inHot, inRefresh)
         defer {
             initialMouse = nil
             initialOrigin = nil
@@ -557,6 +570,7 @@ final class PanelInputView: NSView {
             model.minimized = false
             return
         }
+        if inRefresh { onRefresh?(); return }
         if inHot { model.minimized = true }
     }
 }
@@ -693,6 +707,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ]
     }
 
+    // Hot zone for "force refresh" while in MAX form: covers the ↻ icon and the
+    // "X秒前" age text in the title bar (clicking either forces a refresh).
+    static func maxRefreshHotZones(for size: NSSize) -> [NSRect] {
+        return [
+            NSRect(x: size.width - 120, y: size.height - 50, width: 70, height: 44),
+        ]
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         let host = NSHostingView(rootView: RootView(loader: loader, model: model))
         host.autoresizingMask = [.width, .height]
@@ -731,6 +753,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.panel = p
 
         inputView.toggleHotZones = AppDelegate.maxHotZones(for: maxSize)
+        inputView.refreshHotZones = AppDelegate.maxRefreshHotZones(for: maxSize)
+        inputView.onRefresh = { [weak self] in self?.forceRefresh() }
 
         cancellable = model.$minimized.sink { [weak self] mini in
             guard let self else { return }
@@ -764,6 +788,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.panel.setFrame(NSRect(origin: newOrigin, size: target), display: true, animate: false)
                 if !mini {
                     self.inputView.toggleHotZones = AppDelegate.maxHotZones(for: target)
+                    self.inputView.refreshHotZones = AppDelegate.maxRefreshHotZones(for: target)
+                } else {
+                    self.inputView.refreshHotZones = []
                 }
             }
         }
@@ -774,15 +801,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            guard let self else { return }
-            let task = Process()
-            task.launchPath = "/usr/bin/pkill"
-            let monitorPath = ("~/.claude-usage-monitor/bin/monitor.py" as NSString).expandingTildeInPath
-            task.arguments = ["-USR1", "-f", monitorPath]
-            try? task.run()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                self.loader.load()
-            }
+            self?.forceRefresh()
         }
     }
 
@@ -790,7 +809,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = makeMenuIcon()
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "更新",         action: #selector(refresh),          keyEquivalent: "r"))
+        menu.addItem(NSMenuItem(title: "今すぐ更新",   action: #selector(forceRefresh),     keyEquivalent: "r"))
         menu.addItem(NSMenuItem(title: "形態切替",     action: #selector(toggleForm),       keyEquivalent: "m"))
         menu.addItem(NSMenuItem(title: "位置リセット", action: #selector(resetPosition),    keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "表示／非表示", action: #selector(toggleVisibility), keyEquivalent: "h"))
@@ -800,6 +819,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func refresh() { loader.load() }
+    @objc func forceRefresh() {
+        let task = Process()
+        task.launchPath = "/usr/bin/pkill"
+        let monitorPath = ("~/.claude-usage-monitor/bin/monitor.py" as NSString).expandingTildeInPath
+        task.arguments = ["-USR1", "-f", monitorPath]
+        try? task.run()
+        loader.load()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            self?.loader.load()
+        }
+    }
     @objc func toggleForm() { model.minimized.toggle() }
     @objc func resetPosition() {
         let f = NSScreen.main?.visibleFrame ?? .zero
