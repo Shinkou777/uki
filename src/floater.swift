@@ -306,7 +306,7 @@ struct MaxView: View {
                             .font(.custom("HiraMinProN-W6", size: 10))
                             .foregroundStyle(Color.white.opacity(0.85))
                     }
-                    .frame(width: 18, height: 16)
+                    .frame(width: 14, height: 14)
                     // 最小化按钮：白色细线方框内嵌一根短横，比黄色三角更克制、更仪表化
                     ZStack {
                         Rectangle()
@@ -316,8 +316,7 @@ struct MaxView: View {
                             .fill(Color.white.opacity(0.85))
                             .frame(width: 8, height: 1.5)
                     }
-                    .frame(width: 18, height: 16)
-                    .padding(.trailing, 4)
+                    .frame(width: 14, height: 14)
                 }
                 .padding(.bottom, 14)
 
