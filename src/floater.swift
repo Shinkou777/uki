@@ -284,16 +284,6 @@ struct MaxView: View {
                         .tracking(2)
                         .fixedSize()
                     Spacer(minLength: 6)
-                    // 更新ボタン：白线方框内置「更」字，与最小化按钮的方框造型呼应
-                    ZStack {
-                        Rectangle()
-                            .stroke(Color.white.opacity(0.85), lineWidth: 1)
-                            .frame(width: 14, height: 14)
-                        Text("更")
-                            .font(.custom("HiraMinProN-W6", size: 10))
-                            .foregroundStyle(Color.white.opacity(0.85))
-                    }
-                    .frame(width: 18, height: 16)
                     if let s = loader.state {
                         let age = max(0, Int(loader.now.timeIntervalSince1970) - s.fetched_at)
                         HStack(spacing: 2) {
@@ -307,6 +297,16 @@ struct MaxView: View {
                                 .fixedSize()
                         }
                     }
+                    // 更新ボタン：白线方框内置「新」字，与最小化按钮的方框造型呼应
+                    ZStack {
+                        Rectangle()
+                            .stroke(Color.white.opacity(0.85), lineWidth: 1)
+                            .frame(width: 14, height: 14)
+                        Text("新")
+                            .font(.custom("HiraMinProN-W6", size: 10))
+                            .foregroundStyle(Color.white.opacity(0.85))
+                    }
+                    .frame(width: 18, height: 16)
                     // 最小化按钮：白色细线方框内嵌一根短横，比黄色三角更克制、更仪表化
                     ZStack {
                         Rectangle()
@@ -698,11 +698,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ]
     }
 
-    // Hot zone for "force refresh" while in MAX form: covers the ↻ icon and the
-    // "X秒前" age text in the title bar (clicking either forces a refresh).
+    // Hot zone for "force refresh" while in MAX form: covers the "X秒前" age
+    // text and the 「新」 button (which now sits between age and minimize).
+    // Slight overlap with the minimize zone is fine — mouseUp checks refresh
+    // first and returns, so the 「新」 button wins inside its area.
     static func maxRefreshHotZones(for size: NSSize) -> [NSRect] {
         return [
-            NSRect(x: size.width - 120, y: size.height - 50, width: 70, height: 44),
+            NSRect(x: size.width - 126, y: size.height - 50, width: 80, height: 44),
         ]
     }
 
