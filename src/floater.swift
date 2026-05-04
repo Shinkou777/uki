@@ -104,19 +104,23 @@ func fmtClock(_ resetAt: Int?, now: Date) -> String {
 
 // MARK: - EVA frame shapes
 
-// All four corners cut — octagonal frame, more EVA-instrument-like.
+// Octagonal EVA-instrument frame. Each side's cut can be toggled; default = all four cut.
 struct EvaPanel: Shape {
     var cut: CGFloat = 12
+    var cutLeft: Bool = true
+    var cutRight: Bool = true
     func path(in rect: CGRect) -> Path {
         var p = Path()
-        p.move(to: CGPoint(x: rect.minX + cut, y: rect.minY))
-        p.addLine(to: CGPoint(x: rect.maxX - cut, y: rect.minY))
-        p.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + cut))
-        p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - cut))
-        p.addLine(to: CGPoint(x: rect.maxX - cut, y: rect.maxY))
-        p.addLine(to: CGPoint(x: rect.minX + cut, y: rect.maxY))
-        p.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - cut))
-        p.addLine(to: CGPoint(x: rect.minX, y: rect.minY + cut))
+        let lc = cutLeft ? cut : 0
+        let rc = cutRight ? cut : 0
+        p.move(to: CGPoint(x: rect.minX + lc, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX - rc, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + rc))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - rc))
+        p.addLine(to: CGPoint(x: rect.maxX - rc, y: rect.maxY))
+        p.addLine(to: CGPoint(x: rect.minX + lc, y: rect.maxY))
+        p.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - lc))
+        p.addLine(to: CGPoint(x: rect.minX, y: rect.minY + lc))
         p.closeSubpath()
         return p
     }
@@ -413,7 +417,7 @@ struct MinView: View {
         .padding(EdgeInsets(top: 4, leading: 17, bottom: 4, trailing: 8))
         .frame(width: 116, height: 28)
         .background(
-            EvaPanel(cut: 6)
+            EvaPanel(cut: 6, cutLeft: false)
                 .fill(.ultraThinMaterial)
                 .opacity(0.45)
         )
@@ -423,8 +427,8 @@ struct MinView: View {
                 .allowsHitTesting(false),
             alignment: .leading
         )
-        .clipShape(EvaPanel(cut: 6))
-        .overlay(EvaPanel(cut: 6).stroke(Color.white.opacity(0.5), lineWidth: 1))
+        .clipShape(EvaPanel(cut: 6, cutLeft: false))
+        .overlay(EvaPanel(cut: 6, cutLeft: false).stroke(Color.white.opacity(0.5), lineWidth: 1))
     }
 }
 
