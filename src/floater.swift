@@ -689,21 +689,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let maxSize = NSSize(width: 290, height: 178)
     let minSize = NSSize(width: 116, height: 28)
 
-    // Hot zones for "minimize" while in MAX form: top-right square button + bottom-right red corner.
+    // Hot zones for "minimize" while in MAX form: top-right ▢ + bottom-right red corner.
+    // After the title-bar realignment, the ▢ visible at x≈258–272, so we tighten
+    // the hot zone to x=254–290 to avoid swallowing 「新」 button clicks (新 ends at x=250).
     static func maxHotZones(for size: NSSize) -> [NSRect] {
         return [
-            NSRect(x: size.width - 50, y: size.height - 50, width: 46, height: 44),  // top-right ▢
+            NSRect(x: size.width - 36, y: size.height - 50, width: 36, height: 44),  // top-right ▢
             NSRect(x: size.width - 36, y: 0, width: 36, height: 32),                 // bottom-right ▼
         ]
     }
 
     // Hot zone for "force refresh" while in MAX form: covers the "X秒前" age
-    // text and the 「新」 button (which now sits between age and minimize).
-    // Slight overlap with the minimize zone is fine — mouseUp checks refresh
-    // first and returns, so the 「新」 button wins inside its area.
+    // text and the 「新」 button (sitting between age and minimize). Must end
+    // before the toggle hot zone (x=254) to keep them disjoint.
     static func maxRefreshHotZones(for size: NSSize) -> [NSRect] {
         return [
-            NSRect(x: size.width - 126, y: size.height - 50, width: 80, height: 44),
+            NSRect(x: size.width - 130, y: size.height - 50, width: 90, height: 44),
         ]
     }
 
