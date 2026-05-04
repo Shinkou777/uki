@@ -278,16 +278,7 @@ struct MaxView: View {
     var body: some View {
         VStack(spacing: 0) {
                 HStack(spacing: 8) {
-                    Text("NERV")
-                        .font(.custom("HiraMinProN-W6", size: 15).weight(.black))
-                        .foregroundStyle(.white)
-                        .tracking(2)
-                        .fixedSize()
-                    Text("／")
-                        .font(mincho(15))
-                        .foregroundStyle(Color.white.opacity(0.55))
-                        .fixedSize()
-                    Text("クロード")
+                    Text("クロード稼働率")
                         .font(.custom("HiraMinProN-W6", size: 15).weight(.black))
                         .foregroundStyle(.white)
                         .tracking(2)
