@@ -52,6 +52,20 @@ final class StateLoader: ObservableObject {
 final class AppModel: ObservableObject {
     static let shared = AppModel()
     @Published var minimized: Bool = false
+    @Published var isRefreshing: Bool = false
+}
+
+// Map a raw monitor error string to a short label readable in the title bar.
+// Full message is still shown in the body banner.
+func shortErrorLabel(_ err: String) -> String {
+    if err.contains("401") { return "認証失敗 401" }
+    if err.contains("403") { return "拒否 403" }
+    if err.contains("429") { return "制限 429" }
+    if err.range(of: #"5\d\d"#, options: .regularExpression) != nil { return "サーバ異常" }
+    if err.localizedCaseInsensitiveContains("timed out") || err.localizedCaseInsensitiveContains("timeout") { return "応答なし" }
+    if err.localizedCaseInsensitiveContains("urlerror") || err.localizedCaseInsensitiveContains("connection") { return "接続失敗" }
+    if err.localizedCaseInsensitiveContains("httperror") { return "HTTP エラー" }
+    return "信号異常"
 }
 
 // MARK: - EVA palette + fonts
@@ -277,6 +291,37 @@ struct MetricRow: View {
     }
 }
 
+// Single banner that replaces the 3 metric rows when the monitor reports an error.
+// Surfaces what actually went wrong + a hint to retry, instead of three opaque "Err"s.
+struct ErrorBanner: View {
+    let error: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Rectangle()
+                .fill(Eva.red)
+                .frame(width: 3)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(shortErrorLabel(error))
+                    .font(mincho(14).weight(.bold))
+                    .foregroundStyle(Eva.red)
+                    .fixedSize()
+                Text(error)
+                    .font(mono(10, .regular))
+                    .foregroundStyle(Color(white: 0.35))
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .multilineTextAlignment(.leading)
+                Text("「新」を押して再試行")
+                    .font(mincho(10))
+                    .foregroundStyle(Color(white: 0.45))
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 struct MaxView: View {
     @ObservedObject var loader: StateLoader
     @ObservedObject var model: AppModel
@@ -291,26 +336,41 @@ struct MaxView: View {
                         .fixedSize()
                     Spacer(minLength: 6)
                     if let s = loader.state {
-                        let age = max(0, Int(loader.now.timeIntervalSince1970) - s.fetched_at)
-                        HStack(spacing: 2) {
-                            Text("\(age)")
-                                .font(lcd(10))
-                                .foregroundStyle(Color.white.opacity(0.7))
-                                .fixedSize()
-                            Text("秒前")
+                        if model.isRefreshing {
+                            Text("更新中…")
                                 .font(mincho(10))
-                                .foregroundStyle(Color.white.opacity(0.7))
+                                .foregroundStyle(Color.white.opacity(0.85))
                                 .fixedSize()
+                        } else if let err = s.error {
+                            Text(shortErrorLabel(err))
+                                .font(mincho(10))
+                                .foregroundStyle(Eva.red.opacity(0.95))
+                                .fixedSize()
+                        } else {
+                            let age = max(0, Int(loader.now.timeIntervalSince1970) - s.fetched_at)
+                            HStack(spacing: 2) {
+                                Text("\(age)")
+                                    .font(lcd(10))
+                                    .foregroundStyle(Color.white.opacity(0.7))
+                                    .fixedSize()
+                                Text("秒前")
+                                    .font(mincho(10))
+                                    .foregroundStyle(Color.white.opacity(0.7))
+                                    .fixedSize()
+                            }
                         }
                     }
-                    // 更新ボタン：白线方框内置「新」字，与最小化按钮的方框造型呼应
+                    // 更新ボタン：刷新中显示「…」并白底反色，给点击一个明确反馈
                     ZStack {
+                        Rectangle()
+                            .fill(model.isRefreshing ? Color.white.opacity(0.85) : Color.clear)
+                            .frame(width: 14, height: 14)
                         Rectangle()
                             .stroke(Color.white.opacity(0.85), lineWidth: 1)
                             .frame(width: 14, height: 14)
-                        Text("新")
+                        Text(model.isRefreshing ? "…" : "新")
                             .font(.custom("HiraMinProN-W6", size: 10))
-                            .foregroundStyle(Color.white.opacity(0.85))
+                            .foregroundStyle(model.isRefreshing ? Color.black.opacity(0.8) : Color.white.opacity(0.85))
                     }
                     .frame(width: 14, height: 14)
                     // 最小化按钮：白色细线方框内嵌一根短横，比黄色三角更克制、更仪表化
@@ -328,10 +388,13 @@ struct MaxView: View {
 
                 VStack(spacing: 8) {
                     if let s = loader.state {
-                        let isErr = s.error != nil
-                        MetricRow(label: "5H",  subtitle: "活動限界", util: s.five_hour.utilization ?? 0, resetAt: s.five_hour.reset_at, now: loader.now, hasError: isErr)
-                        MetricRow(label: "7D",  subtitle: "週間限界", util: s.seven_day.utilization ?? 0, resetAt: s.seven_day.reset_at, now: loader.now, hasError: isErr)
-                        MetricRow(label: "OVR", subtitle: "暴走",     util: s.overage.utilization   ?? 0, resetAt: s.overage.reset_at,   now: loader.now, hasError: isErr)
+                        if let err = s.error {
+                            ErrorBanner(error: err)
+                        } else {
+                            MetricRow(label: "5H",  subtitle: "活動限界", util: s.five_hour.utilization ?? 0, resetAt: s.five_hour.reset_at, now: loader.now, hasError: false)
+                            MetricRow(label: "7D",  subtitle: "週間限界", util: s.seven_day.utilization ?? 0, resetAt: s.seven_day.reset_at, now: loader.now, hasError: false)
+                            MetricRow(label: "OVR", subtitle: "暴走",     util: s.overage.utilization   ?? 0, resetAt: s.overage.reset_at,   now: loader.now, hasError: false)
+                        }
                     } else {
                         Text(loader.loadError ?? "同期中…")
                             .font(mincho(12))
@@ -821,6 +884,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func refresh() { loader.load() }
     @objc func forceRefresh() {
+        model.isRefreshing = true
         let task = Process()
         task.launchPath = "/usr/bin/pkill"
         let monitorPath = ("~/.claude-usage-monitor/bin/monitor.py" as NSString).expandingTildeInPath
@@ -829,6 +893,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         loader.load()
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
             self?.loader.load()
+        }
+        // Clear the spinner once the monitor has had time to finish a poll.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            self?.model.isRefreshing = false
         }
     }
     @objc func toggleForm() { model.minimized.toggle() }
