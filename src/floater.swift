@@ -330,7 +330,7 @@ struct MaxView: View {
                     if let s = loader.state {
                         let isErr = s.error != nil
                         MetricRow(label: "5H",  subtitle: "活動限界", util: s.five_hour.utilization ?? 0, resetAt: s.five_hour.reset_at, now: loader.now, hasError: isErr)
-                        MetricRow(label: "7D",  subtitle: "当月限界", util: s.seven_day.utilization ?? 0, resetAt: s.seven_day.reset_at, now: loader.now, hasError: isErr)
+                        MetricRow(label: "7D",  subtitle: "週間限界", util: s.seven_day.utilization ?? 0, resetAt: s.seven_day.reset_at, now: loader.now, hasError: isErr)
                         MetricRow(label: "OVR", subtitle: "暴走",     util: s.overage.utilization   ?? 0, resetAt: s.overage.reset_at,   now: loader.now, hasError: isErr)
                     } else {
                         Text(loader.loadError ?? "同期中…")
