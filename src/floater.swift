@@ -16,6 +16,7 @@ struct UsageState: Decodable {
     let seven_day: UsageWindow
     let overage: UsageWindow
     let primary_claim: String?
+    let error: String?
 }
 
 final class StateLoader: ObservableObject {
@@ -224,11 +225,12 @@ struct HazardStripeBar: View {
 // MARK: - MAX form
 
 struct MetricRow: View {
-    let label: String     // unused (kept for source compat); user removed badge
-    let subtitle: String  // "ENTRY PLUG" etc.
+    let label: String
+    let subtitle: String
     let util: Double
     let resetAt: Int?
     let now: Date
+    let hasError: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -243,9 +245,9 @@ struct MetricRow: View {
                     .font(lcd(10))
                     .foregroundStyle(Color(white: 0.5))
                     .fixedSize()
-                Text(String(format: "%05.1f%%", util * 100))
+                Text(hasError ? "  Err" : String(format: "%05.1f%%", util * 100))
                     .font(lcd(13))
-                    .foregroundStyle(severity(util))
+                    .foregroundStyle(hasError ? Eva.red : severity(util))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
                     .overlay(Rectangle().stroke(Color.white.opacity(0.85), lineWidth: 1))
@@ -326,9 +328,10 @@ struct MaxView: View {
 
                 VStack(spacing: 8) {
                     if let s = loader.state {
-                        MetricRow(label: "5H",  subtitle: "活動限界", util: s.five_hour.utilization ?? 0, resetAt: s.five_hour.reset_at, now: loader.now)
-                        MetricRow(label: "7D",  subtitle: "当月限界", util: s.seven_day.utilization ?? 0, resetAt: s.seven_day.reset_at, now: loader.now)
-                        MetricRow(label: "OVR", subtitle: "暴走",     util: s.overage.utilization   ?? 0, resetAt: s.overage.reset_at,   now: loader.now)
+                        let isErr = s.error != nil
+                        MetricRow(label: "5H",  subtitle: "活動限界", util: s.five_hour.utilization ?? 0, resetAt: s.five_hour.reset_at, now: loader.now, hasError: isErr)
+                        MetricRow(label: "7D",  subtitle: "当月限界", util: s.seven_day.utilization ?? 0, resetAt: s.seven_day.reset_at, now: loader.now, hasError: isErr)
+                        MetricRow(label: "OVR", subtitle: "暴走",     util: s.overage.utilization   ?? 0, resetAt: s.overage.reset_at,   now: loader.now, hasError: isErr)
                     } else {
                         Text(loader.loadError ?? "同期中…")
                             .font(mincho(12))
@@ -400,6 +403,7 @@ struct MinView: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
+        let hasError = loader.state?.error != nil
         let util = loader.state?.five_hour.utilization ?? 0
         let remaining = max(0, min(100, Int((1 - util) * 100 + 0.5)))
         return HStack(spacing: 4) {
@@ -409,9 +413,9 @@ struct MinView: View {
                 .tracking(1)
                 .fixedSize()
             Spacer(minLength: 2)
-            Text(String(format: "%03d", remaining))
+            Text(hasError ? "Err" : String(format: "%03d", remaining))
                 .font(lcd(13))
-                .foregroundStyle(severity(util))
+                .foregroundStyle(hasError ? Eva.red : severity(util))
                 .fixedSize()
         }
         .padding(EdgeInsets(top: 4, leading: 17, bottom: 4, trailing: 8))

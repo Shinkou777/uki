@@ -128,9 +128,11 @@ def fetch_usage() -> dict:
         with urllib.request.urlopen(req, timeout=15) as resp:
             headers = {k.lower(): v for k, v in resp.headers.items()}
     except urllib.error.HTTPError as e:
-        headers = {k.lower(): v for k, v in e.headers.items()}
-        if e.code not in (200, 429):
+        if e.code == 429:
+            headers = {k.lower(): v for k, v in e.headers.items()}
+        else:
             log(f"HTTP {e.code}: {e.reason}")
+            raise
 
     def num(k, conv=float):
         v = headers.get(k)
@@ -191,6 +193,17 @@ def loop() -> None:
             log(f"5h={u5:.0%} 7d={u7:.0%} -> sleep {interval}s ({why})")
         except Exception as e:
             log(f"ERROR: {type(e).__name__}: {e}")
+            interval, why = pick_interval()
+            write_state({
+                "fetched_at": int(time.time()),
+                "error": f"{type(e).__name__}: {e}",
+                "five_hour": {"utilization": None, "reset_at": None, "status": None},
+                "seven_day": {"utilization": None, "reset_at": None, "status": None},
+                "overage": {"utilization": None, "reset_at": None, "status": None},
+                "primary_claim": None,
+                "next_poll_in_sec": interval,
+                "poll_reason": why,
+            })
         # Interruptible sleep: wakes on SIGUSR1 (system wake) or after `interval`
         if _wake.wait(interval):
             _wake.clear()
