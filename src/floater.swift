@@ -291,34 +291,57 @@ struct MetricRow: View {
     }
 }
 
+// Compact one-line summary of the underlying error string.
+// "HTTPError: HTTP Error 401: Unauthorized" -> "HTTP 401 Unauthorized"
+func compactError(_ err: String) -> String {
+    var s = err.replacingOccurrences(of: "HTTPError: ", with: "")
+    s = s.replacingOccurrences(of: "HTTP Error ", with: "HTTP ")
+    s = s.replacingOccurrences(of: ": ", with: " ")
+    return s
+}
+
+// Actionable hint based on the error category.
+func errorHint(_ err: String) -> String {
+    if err.contains("401") { return "OAuth トークン拒否。\nclaude /logout → 再ログイン推奨" }
+    if err.contains("403") { return "アクセス拒否されました" }
+    if err.contains("429") { return "レート制限超過。少々お待ちを" }
+    if err.range(of: #"5\d\d"#, options: .regularExpression) != nil { return "Anthropic 側で異常発生中" }
+    if err.localizedCaseInsensitiveContains("timeout") { return "応答なし。回線確認" }
+    if err.localizedCaseInsensitiveContains("urlerror") || err.localizedCaseInsensitiveContains("connection") { return "ネット接続不可" }
+    return "「新」を押して再試行"
+}
+
 // Single banner that replaces the 3 metric rows when the monitor reports an error.
-// Surfaces what actually went wrong + a hint to retry, instead of three opaque "Err"s.
+// Centered vertically in the body so whitespace is balanced rather than dumped at the bottom.
 struct ErrorBanner: View {
     let error: String
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Rectangle()
-                .fill(Eva.red)
-                .frame(width: 3)
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
+            Spacer(minLength: 0)
+            HStack(spacing: 8) {
+                Rectangle()
+                    .fill(Eva.red)
+                    .frame(width: 10, height: 10)
                 Text(shortErrorLabel(error))
-                    .font(mincho(14).weight(.bold))
+                    .font(.custom("HiraMinProN-W6", size: 15).weight(.heavy))
                     .foregroundStyle(Eva.red)
                     .fixedSize()
-                Text(error)
-                    .font(mono(10, .regular))
-                    .foregroundStyle(Color(white: 0.35))
-                    .lineLimit(2)
-                    .truncationMode(.middle)
-                    .multilineTextAlignment(.leading)
-                Text("「新」を押して再試行")
-                    .font(mincho(10))
-                    .foregroundStyle(Color(white: 0.45))
             }
+            Text(compactError(error))
+                .font(mono(10, .regular))
+                .foregroundStyle(Color(white: 0.45))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Text(errorHint(error))
+                .font(.custom("HiraMinProN-W3", size: 11))
+                .foregroundStyle(Color(white: 0.35))
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 2)
             Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 }
 
