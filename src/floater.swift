@@ -301,14 +301,55 @@ func compactError(_ err: String) -> String {
 }
 
 // Actionable hint based on the error category.
-func errorHint(_ err: String) -> String {
-    if err.contains("401") { return "OAuth トークン拒否。\nclaude /logout → 再ログイン推奨" }
-    if err.contains("403") { return "アクセス拒否されました" }
-    if err.contains("429") { return "レート制限超過。少々お待ちを" }
-    if err.range(of: #"5\d\d"#, options: .regularExpression) != nil { return "Anthropic 側で異常発生中" }
-    if err.localizedCaseInsensitiveContains("timeout") { return "応答なし。回線確認" }
-    if err.localizedCaseInsensitiveContains("urlerror") || err.localizedCaseInsensitiveContains("connection") { return "ネット接続不可" }
-    return "「新」を押して再試行"
+// One-line short description + zero-or-more CLI commands.
+// Commands are rendered as monospace amber-on-black chips so the user can
+// recognise them as something to type into a terminal.
+struct ErrorAdvice {
+    let explanation: String
+    let commands: [String]
+}
+
+func errorAdvice(_ err: String) -> ErrorAdvice {
+    if err.contains("401") {
+        return ErrorAdvice(
+            explanation: "ターミナルで以下を実行:",
+            commands: ["claude /logout", "claude /login"]
+        )
+    }
+    if err.contains("403") {
+        return ErrorAdvice(
+            explanation: "claude.ai でサブスク状態を確認",
+            commands: []
+        )
+    }
+    if err.contains("429") {
+        return ErrorAdvice(
+            explanation: "10〜15 分後に右上の「新」を押す",
+            commands: []
+        )
+    }
+    if err.range(of: #"5\d\d"#, options: .regularExpression) != nil {
+        return ErrorAdvice(
+            explanation: "Anthropic 側で障害発生中。後で再試行",
+            commands: []
+        )
+    }
+    if err.localizedCaseInsensitiveContains("timeout") {
+        return ErrorAdvice(
+            explanation: "応答なし。ネット接続を確認",
+            commands: []
+        )
+    }
+    if err.localizedCaseInsensitiveContains("urlerror") || err.localizedCaseInsensitiveContains("connection") {
+        return ErrorAdvice(
+            explanation: "ネット接続を確認 (Wi-Fi / VPN / プロキシ)",
+            commands: []
+        )
+    }
+    return ErrorAdvice(
+        explanation: "右上の「新」を押して再試行",
+        commands: []
+    )
 }
 
 // Single banner that replaces the 3 metric rows when the monitor reports an error.
@@ -317,7 +358,8 @@ struct ErrorBanner: View {
     let error: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let advice = errorAdvice(error)
+        VStack(alignment: .leading, spacing: 5) {
             Spacer(minLength: 0)
             HStack(spacing: 8) {
                 Rectangle()
@@ -333,12 +375,22 @@ struct ErrorBanner: View {
                 .foregroundStyle(Color(white: 0.45))
                 .lineLimit(1)
                 .truncationMode(.middle)
-            Text(errorHint(error))
-                .font(.custom("HiraMinProN-W3", size: 11))
-                .foregroundStyle(Color(white: 0.35))
-                .lineSpacing(2)
+            Text(advice.explanation)
+                .font(.custom("HiraMinProN-W6", size: 11))
+                .foregroundStyle(Color(white: 0.20))
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 2)
+            // CLI commands rendered as monospace amber-on-black chips so they
+            // visually read as "things to type", not prose.
+            ForEach(advice.commands, id: \.self) { cmd in
+                Text(cmd)
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundStyle(Eva.amber)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.black.opacity(0.85))
+                    .fixedSize()
+            }
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
@@ -399,6 +451,13 @@ struct MaxView: View {
                     }
                     .frame(width: 14, height: 14)
                 }
+                // Lock the title row to exactly the gradient bar's height so the
+                // title text always lands inside the gradient regardless of how
+                // tall (or short) the body content is below it. Without this,
+                // a maxHeight:.infinity body (e.g. ErrorBanner) drags the entire
+                // VStack to fill the frame, shifting the title 8px upward into
+                // the hazard-stripe region.
+                .frame(height: 30)
                 .padding(.bottom, 14)
 
                 VStack(spacing: 8) {
@@ -417,8 +476,9 @@ struct MaxView: View {
                             .frame(maxHeight: .infinity)
                     }
                 }
+                .frame(maxHeight: .infinity, alignment: .top)
         }
-        .padding(EdgeInsets(top: 8, leading: 32, bottom: 4, trailing: 18))
+        .padding(EdgeInsets(top: 10, leading: 32, bottom: 4, trailing: 18))
         .frame(width: 290, height: 178)
         .background(
             // 顶部横向渐变（粉→紫→深蓝），与左侧渐变同色同强度，
