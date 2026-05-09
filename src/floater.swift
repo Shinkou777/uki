@@ -359,28 +359,20 @@ struct MaxView: View {
                         .fixedSize()
                     Spacer(minLength: 6)
                     if let s = loader.state {
-                        if model.isRefreshing {
-                            Text("更新中…")
-                                .font(mincho(10))
-                                .foregroundStyle(Color.white.opacity(0.85))
+                        // Title bar stays minimal: just an age counter. Error detail
+                        // and refresh status live in the body / 新 button so this row
+                        // never has to wrap.
+                        let age = max(0, Int(loader.now.timeIntervalSince1970) - s.fetched_at)
+                        let stale = s.error != nil
+                        HStack(spacing: 2) {
+                            Text("\(age)")
+                                .font(lcd(10))
+                                .foregroundStyle((stale ? Eva.red : Color.white).opacity(0.7))
                                 .fixedSize()
-                        } else if let err = s.error {
-                            Text(shortErrorLabel(err))
+                            Text("秒前")
                                 .font(mincho(10))
-                                .foregroundStyle(Eva.red.opacity(0.95))
+                                .foregroundStyle((stale ? Eva.red : Color.white).opacity(0.7))
                                 .fixedSize()
-                        } else {
-                            let age = max(0, Int(loader.now.timeIntervalSince1970) - s.fetched_at)
-                            HStack(spacing: 2) {
-                                Text("\(age)")
-                                    .font(lcd(10))
-                                    .foregroundStyle(Color.white.opacity(0.7))
-                                    .fixedSize()
-                                Text("秒前")
-                                    .font(mincho(10))
-                                    .foregroundStyle(Color.white.opacity(0.7))
-                                    .fixedSize()
-                            }
                         }
                     }
                     // 更新ボタン：刷新中显示「…」并白底反色，给点击一个明确反馈

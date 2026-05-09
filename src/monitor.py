@@ -17,6 +17,7 @@ Run modes:
 
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -35,6 +36,12 @@ API_URL = "https://api.anthropic.com/v1/messages"
 KEYCHAIN_SERVICE = "Claude Code-credentials"
 MODEL = "claude-haiku-4-5"
 
+# Claude Code's OAuth client (extracted from the Claude Code CLI binary).
+OAUTH_REFRESH_URL = "https://platform.claude.com/v1/oauth/token"
+OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+# platform.claude.com rejects refresh requests without a claude-cli UA (HTTP 403).
+OAUTH_USER_AGENT = "claude-cli/2.1.133 (external, cli)"
+
 INTERVAL_ACTIVE_AC = 180
 INTERVAL_ACTIVE_BATT = 300
 INTERVAL_IDLE = 1800
@@ -52,12 +59,88 @@ def log(msg: str) -> None:
         sys.stderr.write(line)
 
 
-def get_oauth_token() -> str:
+def _detect_keychain_account() -> str:
+    """Read the existing keychain entry's 'acct' attribute so writes target
+    the same record regardless of which user / machine is running this."""
+    try:
+        out = subprocess.run(
+            ["security", "find-generic-password", "-s", KEYCHAIN_SERVICE],
+            capture_output=True, text=True, check=True,
+        ).stdout
+        for line in out.splitlines():
+            m = re.search(r'"acct"<blob>="([^"]*)"', line)
+            if m:
+                return m.group(1)
+    except Exception:
+        pass
+    return os.getenv("USER", "")
+
+
+def read_oauth_record() -> dict:
     out = subprocess.check_output(
         ["security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"],
         text=True,
     ).strip()
-    return json.loads(out)["claudeAiOauth"]["accessToken"]
+    return json.loads(out)
+
+
+def write_oauth_record(record: dict) -> None:
+    account = _detect_keychain_account()
+    if not account:
+        raise RuntimeError("could not determine keychain account for write")
+    subprocess.run(
+        [
+            "security", "add-generic-password",
+            "-s", KEYCHAIN_SERVICE,
+            "-a", account,
+            "-w", json.dumps(record),
+            "-U",  # update if exists
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+
+def get_oauth_token() -> str:
+    return read_oauth_record()["claudeAiOauth"]["accessToken"]
+
+
+def refresh_oauth_token() -> str:
+    """Use the keychain refresh token to mint a new access token, persist
+    it back to keychain, and return the new access token. Raises on
+    failure."""
+    record = read_oauth_record()
+    oauth = record.get("claudeAiOauth", {})
+    rt = oauth.get("refreshToken")
+    if not rt:
+        raise RuntimeError("no refreshToken in keychain")
+    body = json.dumps({
+        "grant_type": "refresh_token",
+        "refresh_token": rt,
+        "client_id": OAUTH_CLIENT_ID,
+    }).encode()
+    req = urllib.request.Request(
+        OAUTH_REFRESH_URL,
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": OAUTH_USER_AGENT,
+        },
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        new = json.loads(resp.read().decode())
+    if "access_token" not in new:
+        raise RuntimeError(f"refresh response missing access_token: {new}")
+    oauth["accessToken"] = new["access_token"]
+    if new.get("refresh_token"):
+        oauth["refreshToken"] = new["refresh_token"]
+    if "expires_in" in new:
+        oauth["expiresAt"] = int((time.time() + int(new["expires_in"])) * 1000)
+    record["claudeAiOauth"] = oauth
+    write_oauth_record(record)
+    log("OAuth token refreshed via refresh_token")
+    return oauth["accessToken"]
 
 
 def get_idle_seconds() -> int:
@@ -104,8 +187,7 @@ def pick_interval() -> tuple[int, str]:
     return INTERVAL_ACTIVE_AC, "active on AC"
 
 
-def fetch_usage() -> dict:
-    token = get_oauth_token()
+def _do_fetch(token: str) -> dict:
     body = json.dumps(
         {
             "model": MODEL,
@@ -124,12 +206,32 @@ def fetch_usage() -> dict:
             "content-type": "application/json",
         },
     )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return {k.lower(): v for k, v in resp.headers.items()}
+
+
+def fetch_usage() -> dict:
+    token = get_oauth_token()
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            headers = {k.lower(): v for k, v in resp.headers.items()}
+        headers = _do_fetch(token)
     except urllib.error.HTTPError as e:
         if e.code == 429:
             headers = {k.lower(): v for k, v in e.headers.items()}
+        elif e.code == 401:
+            log("HTTP 401: refreshing OAuth token and retrying")
+            try:
+                new_token = refresh_oauth_token()
+            except Exception as refresh_err:
+                log(f"refresh failed: {type(refresh_err).__name__}: {refresh_err}")
+                raise
+            try:
+                headers = _do_fetch(new_token)
+            except urllib.error.HTTPError as retry_err:
+                if retry_err.code == 429:
+                    headers = {k.lower(): v for k, v in retry_err.headers.items()}
+                else:
+                    log(f"HTTP {retry_err.code} after refresh: {retry_err.reason}")
+                    raise
         else:
             log(f"HTTP {e.code}: {e.reason}")
             raise
