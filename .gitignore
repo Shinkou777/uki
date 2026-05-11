@@ -6,6 +6,7 @@ build/
 
 # Runtime data — never commit
 state.json
+config.json
 *.log
 .env
 

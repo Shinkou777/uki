@@ -36,6 +36,16 @@ API_URL = "https://api.anthropic.com/v1/messages"
 KEYCHAIN_SERVICE = "Claude Code-credentials"
 MODEL = "claude-haiku-4-5"
 
+CONFIG = ROOT / "config.json"
+
+
+def read_config() -> dict:
+    try:
+        return json.loads(CONFIG.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
 # Claude Code's OAuth client (extracted from the Claude Code CLI binary).
 OAUTH_REFRESH_URL = "https://platform.claude.com/v1/oauth/token"
 OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
@@ -210,7 +220,75 @@ def _do_fetch(token: str) -> dict:
         return {k.lower(): v for k, v in resp.headers.items()}
 
 
+def _do_fetch_apikey(api_key: str) -> dict:
+    body = json.dumps({
+        "model": MODEL,
+        "max_tokens": 1,
+        "messages": [{"role": "user", "content": "."}],
+    }).encode()
+    req = urllib.request.Request(
+        API_URL,
+        data=body,
+        method="POST",
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return {k.lower(): v for k, v in resp.headers.items()}
+
+
+def _parse_claude_headers(headers: dict) -> dict:
+    def num(k, conv=float):
+        v = headers.get(k)
+        try:
+            return conv(v) if v is not None else None
+        except (ValueError, TypeError):
+            return None
+
+    return {
+        "fetched_at": int(time.time()),
+        "api_source": "claude",
+        "five_hour": {
+            "utilization": num("anthropic-ratelimit-unified-5h-utilization"),
+            "reset_at": num("anthropic-ratelimit-unified-5h-reset", int),
+            "status": headers.get("anthropic-ratelimit-unified-5h-status"),
+        },
+        "seven_day": {
+            "utilization": num("anthropic-ratelimit-unified-7d-utilization"),
+            "reset_at": num("anthropic-ratelimit-unified-7d-reset", int),
+            "status": headers.get("anthropic-ratelimit-unified-7d-status"),
+        },
+        "overage": {
+            "utilization": num("anthropic-ratelimit-unified-overage-utilization"),
+            "reset_at": num("anthropic-ratelimit-unified-overage-reset", int),
+            "status": headers.get("anthropic-ratelimit-unified-overage-status"),
+        },
+        "primary_claim": headers.get("anthropic-ratelimit-unified-representative-claim"),
+    }
+
+
 def fetch_usage() -> dict:
+    config = read_config()
+    source = config.get("api_source", "claude_oauth")
+
+    if source == "claude_apikey":
+        key = config.get("api_key", "")
+        if not key:
+            raise RuntimeError("config.json に Claude API key が未設定")
+        try:
+            headers = _do_fetch_apikey(key)
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                headers = {k.lower(): v for k, v in e.headers.items()}
+            else:
+                log(f"HTTP {e.code}: {e.reason}")
+                raise
+        return _parse_claude_headers(headers)
+
+    # claude_oauth (default) — original keychain-based flow
     token = get_oauth_token()
     try:
         headers = _do_fetch(token)
@@ -235,33 +313,7 @@ def fetch_usage() -> dict:
         else:
             log(f"HTTP {e.code}: {e.reason}")
             raise
-
-    def num(k, conv=float):
-        v = headers.get(k)
-        try:
-            return conv(v) if v is not None else None
-        except (ValueError, TypeError):
-            return None
-
-    return {
-        "fetched_at": int(time.time()),
-        "five_hour": {
-            "utilization": num("anthropic-ratelimit-unified-5h-utilization"),
-            "reset_at": num("anthropic-ratelimit-unified-5h-reset", int),
-            "status": headers.get("anthropic-ratelimit-unified-5h-status"),
-        },
-        "seven_day": {
-            "utilization": num("anthropic-ratelimit-unified-7d-utilization"),
-            "reset_at": num("anthropic-ratelimit-unified-7d-reset", int),
-            "status": headers.get("anthropic-ratelimit-unified-7d-status"),
-        },
-        "overage": {
-            "utilization": num("anthropic-ratelimit-unified-overage-utilization"),
-            "reset_at": num("anthropic-ratelimit-unified-overage-reset", int),
-            "status": headers.get("anthropic-ratelimit-unified-overage-status"),
-        },
-        "primary_claim": headers.get("anthropic-ratelimit-unified-representative-claim"),
-    }
+    return _parse_claude_headers(headers)
 
 
 def write_state(state: dict) -> None:
@@ -298,6 +350,7 @@ def loop() -> None:
             interval, why = pick_interval()
             write_state({
                 "fetched_at": int(time.time()),
+                "api_source": "claude",
                 "error": f"{type(e).__name__}: {e}",
                 "five_hour": {"utilization": None, "reset_at": None, "status": None},
                 "seven_day": {"utilization": None, "reset_at": None, "status": None},

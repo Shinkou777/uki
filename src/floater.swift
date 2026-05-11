@@ -12,11 +12,30 @@ struct UsageWindow: Decodable {
 
 struct UsageState: Decodable {
     let fetched_at: Int
+    let api_source: String?
     let five_hour: UsageWindow
     let seven_day: UsageWindow
     let overage: UsageWindow
     let primary_claim: String?
     let error: String?
+}
+
+struct FloaterConfig: Codable {
+    var api_source: String
+    var api_key: String?
+
+    static let path = ("~/.claude-usage-monitor/config.json" as NSString).expandingTildeInPath
+
+    static func load() -> FloaterConfig? {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let c = try? JSONDecoder().decode(FloaterConfig.self, from: data) else { return nil }
+        return c
+    }
+
+    func save() throws {
+        let data = try JSONEncoder().encode(self)
+        try data.write(to: URL(fileURLWithPath: FloaterConfig.path))
+    }
 }
 
 final class StateLoader: ObservableObject {
@@ -824,10 +843,77 @@ struct InvisibleButton: NSViewRepresentable {
     }
 }
 
+// MARK: - Settings
+
+struct SettingsView: View {
+    @State private var apiSource = "claude_oauth"
+    @State private var apiKey = ""
+    @State private var status = ""
+    var onSave: (() -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("API 設定")
+                .font(.custom("HiraMinProN-W6", size: 18))
+
+            Picker("API ソース", selection: $apiSource) {
+                Text("Claude (OAuth — Claude Code 連携)").tag("claude_oauth")
+                Text("Claude (API Key)").tag("claude_apikey")
+            }
+            .pickerStyle(.radioGroup)
+
+            if apiSource != "claude_oauth" {
+                SecureField("API Key", text: $apiKey)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            if apiSource == "claude_oauth" {
+                Text("Claude Code CLI のキーチェーン認証を使用します")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack {
+                if !status.isEmpty {
+                    Text(status)
+                        .font(.caption)
+                        .foregroundStyle(status.contains("エラー") ? .red : .green)
+                }
+                Spacer()
+                Button("保存") { save() }
+                    .disabled(apiSource != "claude_oauth" && apiKey.isEmpty)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
+        .onAppear { loadConfig() }
+    }
+
+    private func loadConfig() {
+        guard let c = FloaterConfig.load() else { return }
+        apiSource = c.api_source
+        apiKey = c.api_key ?? ""
+    }
+
+    private func save() {
+        var c = FloaterConfig(api_source: apiSource)
+        if apiSource != "claude_oauth" { c.api_key = apiKey }
+        do {
+            try c.save()
+            status = "保存しました"
+            onSave?()
+        } catch {
+            status = "エラー: \(error.localizedDescription)"
+        }
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var panel: NSPanel!
     var statusItem: NSStatusItem!
     var inputView: PanelInputView!
+    var settingsWindow: NSWindow?
     let loader = StateLoader()
     let model = AppModel.shared
     var cancellable: AnyCancellable?
@@ -942,6 +1028,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             self?.forceRefresh()
         }
+
+        if FloaterConfig.load() == nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                self?.showSettings()
+            }
+        }
     }
 
     func setupMenuBar() {
@@ -953,6 +1045,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "位置リセット", action: #selector(resetPosition),    keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "表示／非表示", action: #selector(toggleVisibility), keyEquivalent: "h"))
         menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "設定",         action: #selector(showSettings),     keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "終了", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         statusItem.menu = menu
     }
@@ -982,6 +1075,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc func toggleVisibility() {
         if panel.isVisible { panel.orderOut(nil) } else { panel.makeKeyAndOrderFront(nil) }
+    }
+
+    @objc func showSettings() {
+        if let w = settingsWindow, w.isVisible {
+            w.makeKeyAndOrderFront(nil)
+            return
+        }
+        let view = SettingsView { [weak self] in self?.restartMonitor() }
+        let hosting = NSHostingView(rootView: view)
+        let w = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 260),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        w.title = "ClaudeFloater 設定"
+        w.contentView = hosting
+        w.center()
+        w.level = .floating
+        w.makeKeyAndOrderFront(nil)
+        settingsWindow = w
+    }
+
+    func restartMonitor() {
+        let monitorPath = ("~/.claude-usage-monitor/bin/monitor.py" as NSString).expandingTildeInPath
+        let kill = Process()
+        kill.launchPath = "/usr/bin/pkill"
+        kill.arguments = ["-f", monitorPath]
+        try? kill.run()
+        kill.waitUntilExit()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            let start = Process()
+            start.launchPath = "/usr/bin/python3"
+            start.arguments = [monitorPath]
+            start.standardOutput = FileHandle.nullDevice
+            start.standardError = FileHandle.nullDevice
+            try? start.run()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            self?.loader.load()
+        }
     }
 }
 
