@@ -57,6 +57,8 @@ INTERVAL_ACTIVE_BATT = 300
 INTERVAL_IDLE = 1800
 INTERVAL_LOW_BATTERY = 1800
 IDLE_THRESHOLD_SEC = 600
+BACKOFF_INITIAL = 15
+BACKOFF_MAX = 120
 
 
 def log(msg: str) -> None:
@@ -334,10 +336,12 @@ signal.signal(signal.SIGUSR1, _on_sigusr1)
 
 def loop() -> None:
     log("monitor daemon starting")
+    consecutive_errors = 0
     while True:
         interval = 300
         try:
             state = fetch_usage()
+            consecutive_errors = 0
             interval, why = pick_interval()
             state["next_poll_in_sec"] = interval
             state["poll_reason"] = why
@@ -346,8 +350,10 @@ def loop() -> None:
             u7 = state["seven_day"]["utilization"] or 0
             log(f"5h={u5:.0%} 7d={u7:.0%} -> sleep {interval}s ({why})")
         except Exception as e:
-            log(f"ERROR: {type(e).__name__}: {e}")
-            interval, why = pick_interval()
+            consecutive_errors += 1
+            backoff = min(BACKOFF_INITIAL * (2 ** (consecutive_errors - 1)), BACKOFF_MAX)
+            interval = int(backoff)
+            log(f"ERROR: {type(e).__name__}: {e} (retry #{consecutive_errors} in {interval}s)")
             write_state({
                 "fetched_at": int(time.time()),
                 "api_source": "claude",
@@ -357,7 +363,7 @@ def loop() -> None:
                 "overage": {"utilization": None, "reset_at": None, "status": None},
                 "primary_claim": None,
                 "next_poll_in_sec": interval,
-                "poll_reason": why,
+                "poll_reason": f"backoff #{consecutive_errors}",
             })
         # Interruptible sleep: wakes on SIGUSR1 (system wake) or after `interval`
         if _wake.wait(interval):

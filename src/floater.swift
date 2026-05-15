@@ -72,6 +72,41 @@ final class AppModel: ObservableObject {
     static let shared = AppModel()
     @Published var minimized: Bool = false
     @Published var isRefreshing: Bool = false
+    @Published var blinkOn: Bool = false
+    @Published var dotCount: Int = 1
+    @Published var refreshResult: RefreshResult? = nil
+
+    enum RefreshResult { case success, error }
+
+    private var blinkTimer: Timer?
+    private var dotTimer: Timer?
+
+    func startRefreshAnimation() {
+        isRefreshing = true
+        refreshResult = nil
+        blinkOn = true
+        dotCount = 1
+        blinkTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
+            self?.blinkOn.toggle()
+        }
+        dotTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.dotCount = (self.dotCount % 3) + 1
+        }
+    }
+
+    func endRefreshAnimation(success: Bool) {
+        blinkTimer?.invalidate()
+        blinkTimer = nil
+        dotTimer?.invalidate()
+        dotTimer = nil
+        refreshResult = success ? .success : .error
+        blinkOn = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            self?.isRefreshing = false
+            self?.refreshResult = nil
+        }
+    }
 }
 
 // Map a raw monitor error string to a short label readable in the title bar.
@@ -420,6 +455,22 @@ struct MaxView: View {
     @ObservedObject var loader: StateLoader
     @ObservedObject var model: AppModel
 
+    private var refreshFill: Color {
+        guard model.isRefreshing else { return .clear }
+        if let r = model.refreshResult {
+            return r == .success ? Eva.green : Eva.red
+        }
+        return model.blinkOn ? Eva.amber : .clear
+    }
+
+    private var refreshTextColor: Color {
+        guard model.isRefreshing else { return Color.white.opacity(0.85) }
+        if model.refreshResult != nil || model.blinkOn {
+            return Color.black.opacity(0.8)
+        }
+        return Color.white.opacity(0.85)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
                 HStack(spacing: 8) {
@@ -430,33 +481,36 @@ struct MaxView: View {
                         .fixedSize()
                     Spacer(minLength: 6)
                     if let s = loader.state {
-                        // Title bar stays minimal: just an age counter. Error detail
-                        // and refresh status live in the body / 新 button so this row
-                        // never has to wrap.
-                        let age = max(0, Int(loader.now.timeIntervalSince1970) - s.fetched_at)
-                        let stale = s.error != nil
-                        HStack(spacing: 2) {
-                            Text("\(age)")
-                                .font(lcd(10))
-                                .foregroundStyle((stale ? Eva.red : Color.white).opacity(0.7))
-                                .fixedSize()
-                            Text("秒前")
+                        if model.isRefreshing && model.refreshResult == nil {
+                            Text("受信中" + String(repeating: ".", count: model.dotCount))
                                 .font(mincho(10))
-                                .foregroundStyle((stale ? Eva.red : Color.white).opacity(0.7))
+                                .foregroundStyle(Eva.amber.opacity(0.9))
                                 .fixedSize()
+                        } else {
+                            let age = max(0, Int(loader.now.timeIntervalSince1970) - s.fetched_at)
+                            let stale = s.error != nil
+                            HStack(spacing: 2) {
+                                Text("\(age)")
+                                    .font(lcd(10))
+                                    .foregroundStyle((stale ? Eva.red : Color.white).opacity(0.7))
+                                    .fixedSize()
+                                Text("秒前")
+                                    .font(mincho(10))
+                                    .foregroundStyle((stale ? Eva.red : Color.white).opacity(0.7))
+                                    .fixedSize()
+                            }
                         }
                     }
-                    // 更新ボタン：刷新中显示「…」并白底反色，给点击一个明确反馈
                     ZStack {
                         Rectangle()
-                            .fill(model.isRefreshing ? Color.white.opacity(0.85) : Color.clear)
+                            .fill(refreshFill)
                             .frame(width: 14, height: 14)
                         Rectangle()
                             .stroke(Color.white.opacity(0.85), lineWidth: 1)
                             .frame(width: 14, height: 14)
-                        Text(model.isRefreshing ? "…" : "新")
+                        Text("新")
                             .font(.custom("HiraMinProN-W6", size: 10))
-                            .foregroundStyle(model.isRefreshing ? Color.black.opacity(0.8) : Color.white.opacity(0.85))
+                            .foregroundStyle(refreshTextColor)
                     }
                     .frame(width: 14, height: 14)
                     // 最小化按钮：白色细线方框内嵌一根短横，比黄色三角更克制、更仪表化
@@ -917,6 +971,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let loader = StateLoader()
     let model = AppModel.shared
     var cancellable: AnyCancellable?
+    var refreshPollTimer: Timer?
 
     let maxSize = NSSize(width: 290, height: 178)
     let minSize = NSSize(width: 116, height: 28)
@@ -1052,19 +1107,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func refresh() { loader.load() }
     @objc func forceRefresh() {
-        model.isRefreshing = true
+        guard !model.isRefreshing else { return }
+        let startFetchedAt = loader.state?.fetched_at ?? 0
+        model.startRefreshAnimation()
         let task = Process()
         task.launchPath = "/usr/bin/pkill"
         let monitorPath = ("~/.claude-usage-monitor/bin/monitor.py" as NSString).expandingTildeInPath
         task.arguments = ["-USR1", "-f", monitorPath]
         try? task.run()
-        loader.load()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-            self?.loader.load()
-        }
-        // Clear the spinner once the monitor has had time to finish a poll.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
-            self?.model.isRefreshing = false
+        var pollCount = 0
+        let statePath = ("~/.claude-usage-monitor/state.json" as NSString).expandingTildeInPath
+        refreshPollTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            self.loader.load()
+            pollCount += 1
+            if let data = try? Data(contentsOf: URL(fileURLWithPath: statePath)),
+               let s = try? JSONDecoder().decode(UsageState.self, from: data),
+               s.fetched_at != startFetchedAt {
+                timer.invalidate()
+                self.refreshPollTimer = nil
+                self.model.endRefreshAnimation(success: s.error == nil)
+            } else if pollCount >= 15 {
+                timer.invalidate()
+                self.refreshPollTimer = nil
+                self.model.endRefreshAnimation(success: false)
+            }
         }
     }
     @objc func toggleForm() { model.minimized.toggle() }
