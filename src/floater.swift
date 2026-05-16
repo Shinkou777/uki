@@ -75,6 +75,7 @@ final class AppModel: ObservableObject {
     @Published var blinkOn: Bool = false
     @Published var dotCount: Int = 1
     @Published var refreshResult: RefreshResult? = nil
+    @Published var showUsageHint: Bool = false
 
     enum RefreshResult { case success, error }
 
@@ -604,6 +605,24 @@ struct MaxView: View {
         .clipShape(EvaPanel(cut: 14))
         .overlay(EvaPanel(cut: 14).stroke(Color.white.opacity(0.5), lineWidth: 1))
         .overlay(HazardCorner(size: 14, rotated: true),  alignment: .bottomTrailing)
+        .overlay(
+            Group {
+                if model.showUsageHint {
+                    Text("▸ 公式で使用量を確認")
+                        .font(mincho(9))
+                        .foregroundStyle(Eva.amber)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color.black.opacity(0.88))
+                        .clipShape(EvaPanel(cut: 4))
+                        .overlay(EvaPanel(cut: 4).stroke(Eva.amber.opacity(0.4), lineWidth: 1))
+                        .transition(.opacity)
+                }
+            }
+            .animation(.easeInOut(duration: 0.15), value: model.showUsageHint)
+            .padding(.top, 44).padding(.leading, 32),
+            alignment: .topLeading
+        )
     }
 }
 
@@ -731,9 +750,11 @@ final class InputContainer: NSView {
 // (toggle min, expand max) based on click location and model state.
 final class PanelInputView: NSView {
     weak var model: AppModel?
-    var toggleHotZones: [NSRect] = []  // view-local bottom-up coords; any rect = minimize
-    var refreshHotZones: [NSRect] = [] // view-local bottom-up coords; any rect = force refresh
+    var toggleHotZones: [NSRect] = []
+    var refreshHotZones: [NSRect] = []
+    var usageHotZones: [NSRect] = []
     var onRefresh: (() -> Void)?
+    var onUsage: (() -> Void)?
 
     private var initialMouse: NSPoint?
     private var initialOrigin: NSPoint?
@@ -741,7 +762,28 @@ final class PanelInputView: NSView {
 
     override var mouseDownCanMoveWindow: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-    override func hitTest(_ point: NSPoint) -> NSView? { self }  // claim all hits
+    override func hitTest(_ point: NSPoint) -> NSView? { self }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .activeAlways, .mouseEnteredAndExited],
+            owner: self
+        ))
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        guard !(model?.minimized ?? true) else { return }
+        let loc = convert(event.locationInWindow, from: nil)
+        let over = usageHotZones.contains(where: { $0.contains(loc) })
+        if model?.showUsageHint != over { model?.showUsageHint = over }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        model?.showUsageHint = false
+    }
 
     override func mouseDown(with event: NSEvent) {
         initialMouse = NSEvent.mouseLocation
@@ -766,8 +808,9 @@ final class PanelInputView: NSView {
         let mini = model?.minimized ?? false
         let inHot = toggleHotZones.contains(where: { $0.contains(loc) })
         let inRefresh = refreshHotZones.contains(where: { $0.contains(loc) })
-        NSLog("[floater] mouseUp loc=(%.1f,%.1f) toggleZones=%d refreshZones=%d dragged=%d mini=%d inHot=%d inRefresh=%d",
-              loc.x, loc.y, toggleHotZones.count, refreshHotZones.count, dragged, mini, inHot, inRefresh)
+        let inUsage = usageHotZones.contains(where: { $0.contains(loc) })
+        NSLog("[floater] mouseUp loc=(%.1f,%.1f) dragged=%d mini=%d inHot=%d inRefresh=%d inUsage=%d",
+              loc.x, loc.y, dragged, mini, inHot, inRefresh, inUsage)
         defer {
             initialMouse = nil
             initialOrigin = nil
@@ -780,6 +823,7 @@ final class PanelInputView: NSView {
             return
         }
         if inRefresh { onRefresh?(); return }
+        if inUsage { onUsage?(); return }
         if inHot { model.minimized = true }
     }
 }
@@ -995,6 +1039,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ]
     }
 
+    static func maxUsageHotZones(for size: NSSize) -> [NSRect] {
+        return [
+            NSRect(x: 0, y: size.height - 50, width: size.width - 130, height: 50),
+        ]
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         let host = NSHostingView(rootView: RootView(loader: loader, model: model))
         host.autoresizingMask = [.width, .height]
@@ -1034,7 +1084,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         inputView.toggleHotZones = AppDelegate.maxHotZones(for: maxSize)
         inputView.refreshHotZones = AppDelegate.maxRefreshHotZones(for: maxSize)
+        inputView.usageHotZones = AppDelegate.maxUsageHotZones(for: maxSize)
         inputView.onRefresh = { [weak self] in self?.forceRefresh() }
+        inputView.onUsage = { NSWorkspace.shared.open(URL(string: "https://claude.ai/settings/usage")!) }
 
         cancellable = model.$minimized.sink { [weak self] mini in
             guard let self else { return }
@@ -1069,8 +1121,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if !mini {
                     self.inputView.toggleHotZones = AppDelegate.maxHotZones(for: target)
                     self.inputView.refreshHotZones = AppDelegate.maxRefreshHotZones(for: target)
+                    self.inputView.usageHotZones = AppDelegate.maxUsageHotZones(for: target)
                 } else {
                     self.inputView.refreshHotZones = []
+                    self.inputView.usageHotZones = []
+                    self.model.showUsageHint = false
                 }
             }
         }
@@ -1099,6 +1154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "形態切替",     action: #selector(toggleForm),       keyEquivalent: "m"))
         menu.addItem(NSMenuItem(title: "位置リセット", action: #selector(resetPosition),    keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "表示／非表示", action: #selector(toggleVisibility), keyEquivalent: "h"))
+        menu.addItem(NSMenuItem(title: "使用状況 (claude.ai)", action: #selector(openUsagePage), keyEquivalent: "u"))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "設定",         action: #selector(showSettings),     keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "終了", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
@@ -1135,6 +1191,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     @objc func toggleForm() { model.minimized.toggle() }
+    @objc func openUsagePage() {
+        NSWorkspace.shared.open(URL(string: "https://claude.ai/settings/usage")!)
+    }
     @objc func resetPosition() {
         let f = NSScreen.main?.visibleFrame ?? .zero
         let s = panel.frame.size
