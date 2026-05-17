@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import Network
 import SwiftUI
 
 // MARK: - Data
@@ -1016,6 +1017,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel.shared
     var cancellable: AnyCancellable?
     var refreshPollTimer: Timer?
+    var pathMonitor: NWPathMonitor?
+    var toggleVisibilityItem: NSMenuItem?
 
     let maxSize = NSSize(width: 290, height: 178)
     let minSize = NSSize(width: 116, height: 28)
@@ -1132,12 +1135,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         setupMenuBar()
 
-        // On system wake, kick the monitor daemon and reload state shortly after
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
         ) { [weak self] _ in
             self?.forceRefresh()
         }
+
+        let monitor = NWPathMonitor()
+        var networkWasDown = false
+        monitor.pathUpdateHandler = { [weak self] path in
+            if path.status == .satisfied && networkWasDown {
+                DispatchQueue.main.async { self?.forceRefresh() }
+            }
+            networkWasDown = (path.status != .satisfied)
+        }
+        monitor.start(queue: DispatchQueue(label: "net-watch"))
+        self.pathMonitor = monitor
 
         if FloaterConfig.load() == nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
@@ -1153,11 +1166,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "今すぐ更新",   action: #selector(forceRefresh),     keyEquivalent: "r"))
         menu.addItem(NSMenuItem(title: "形態切替",     action: #selector(toggleForm),       keyEquivalent: "m"))
         menu.addItem(NSMenuItem(title: "位置リセット", action: #selector(resetPosition),    keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "表示／非表示", action: #selector(toggleVisibility), keyEquivalent: "h"))
+        let toggleItem = NSMenuItem(title: "フローターを隠す", action: #selector(toggleVisibility), keyEquivalent: "h")
+        self.toggleVisibilityItem = toggleItem
+        menu.addItem(toggleItem)
         menu.addItem(NSMenuItem(title: "使用状況 (claude.ai)", action: #selector(openUsagePage), keyEquivalent: "u"))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "設定",         action: #selector(showSettings),     keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "終了", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.delegate = self
         statusItem.menu = menu
     }
 
@@ -1165,6 +1181,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func forceRefresh() {
         guard !model.isRefreshing else { return }
         let startFetchedAt = loader.state?.fetched_at ?? 0
+        let animStart = Date()
         model.startRefreshAnimation()
         let task = Process()
         task.launchPath = "/usr/bin/pkill"
@@ -1182,7 +1199,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                s.fetched_at != startFetchedAt {
                 timer.invalidate()
                 self.refreshPollTimer = nil
-                self.model.endRefreshAnimation(success: s.error == nil)
+                let success = s.error == nil
+                let delay = max(0, 1.5 - Date().timeIntervalSince(animStart))
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    self.model.endRefreshAnimation(success: success)
+                }
             } else if pollCount >= 15 {
                 timer.invalidate()
                 self.refreshPollTimer = nil
@@ -1242,6 +1263,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
             self?.loader.load()
         }
+    }
+}
+
+extension AppDelegate: NSMenuDelegate {
+    func menuWillOpen(_ menu: NSMenu) {
+        toggleVisibilityItem?.title = panel.isVisible ? "フローターを隠す" : "フローターを表示"
     }
 }
 
