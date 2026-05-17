@@ -368,6 +368,7 @@ def loop() -> None:
         # Interruptible sleep: wakes on SIGUSR1 (system wake) or after `interval`
         if _wake.wait(interval):
             _wake.clear()
+            consecutive_errors = 0
             log("woken early by SIGUSR1")
 
 

@@ -73,37 +73,18 @@ final class AppModel: ObservableObject {
     static let shared = AppModel()
     @Published var minimized: Bool = false
     @Published var isRefreshing: Bool = false
-    @Published var blinkOn: Bool = false
-    @Published var dotCount: Int = 1
     @Published var refreshResult: RefreshResult? = nil
     @Published var showUsageHint: Bool = false
 
     enum RefreshResult { case success, error }
 
-    private var blinkTimer: Timer?
-    private var dotTimer: Timer?
-
     func startRefreshAnimation() {
         isRefreshing = true
         refreshResult = nil
-        blinkOn = true
-        dotCount = 1
-        blinkTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
-            self?.blinkOn.toggle()
-        }
-        dotTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            self.dotCount = (self.dotCount % 3) + 1
-        }
     }
 
     func endRefreshAnimation(success: Bool) {
-        blinkTimer?.invalidate()
-        blinkTimer = nil
-        dotTimer?.invalidate()
-        dotTimer = nil
         refreshResult = success ? .success : .error
-        blinkOn = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
             self?.isRefreshing = false
             self?.refreshResult = nil
@@ -457,22 +438,6 @@ struct MaxView: View {
     @ObservedObject var loader: StateLoader
     @ObservedObject var model: AppModel
 
-    private var refreshFill: Color {
-        guard model.isRefreshing else { return .clear }
-        if let r = model.refreshResult {
-            return r == .success ? Eva.green : Eva.red
-        }
-        return model.blinkOn ? Eva.amber : .clear
-    }
-
-    private var refreshTextColor: Color {
-        guard model.isRefreshing else { return Color.white.opacity(0.85) }
-        if model.refreshResult != nil || model.blinkOn {
-            return Color.black.opacity(0.8)
-        }
-        return Color.white.opacity(0.85)
-    }
-
     var body: some View {
         VStack(spacing: 0) {
                 HStack(spacing: 8) {
@@ -484,10 +449,14 @@ struct MaxView: View {
                     Spacer(minLength: 6)
                     if let s = loader.state {
                         if model.isRefreshing && model.refreshResult == nil {
-                            Text("受信中" + String(repeating: ".", count: model.dotCount))
-                                .font(mincho(10))
-                                .foregroundStyle(Eva.amber.opacity(0.9))
-                                .fixedSize()
+                            TimelineView(.animation) { ctx in
+                                let t = ctx.date.timeIntervalSinceReferenceDate
+                                let v = 0.45 + 0.45 * sin(t * .pi * 2 / 1.4)
+                                Text("受信中")
+                                    .font(mincho(10))
+                                    .foregroundStyle(Eva.amber.opacity(v))
+                            }
+                            .fixedSize()
                         } else {
                             let age = max(0, Int(loader.now.timeIntervalSince1970) - s.fetched_at)
                             let stale = s.error != nil
@@ -504,15 +473,24 @@ struct MaxView: View {
                         }
                     }
                     ZStack {
-                        Rectangle()
-                            .fill(refreshFill)
+                        if model.isRefreshing && model.refreshResult == nil {
+                            TimelineView(.animation) { ctx in
+                                let t = ctx.date.timeIntervalSinceReferenceDate
+                                let v = 0.12 + 0.76 * pow((1 + sin(t * .pi * 2 / 1.4)) / 2, 1.8)
+                                Rectangle().fill(Eva.amber.opacity(v))
+                            }
                             .frame(width: 14, height: 14)
+                        } else if let r = model.refreshResult {
+                            Rectangle()
+                                .fill(r == .success ? Eva.green : Eva.red)
+                                .frame(width: 14, height: 14)
+                        }
                         Rectangle()
                             .stroke(Color.white.opacity(0.85), lineWidth: 1)
                             .frame(width: 14, height: 14)
                         Text("新")
                             .font(.custom("HiraMinProN-W6", size: 10))
-                            .foregroundStyle(refreshTextColor)
+                            .foregroundStyle(model.isRefreshing ? Color.black.opacity(0.8) : Color.white.opacity(0.85))
                     }
                     .frame(width: 14, height: 14)
                     // 最小化按钮：白色细线方框内嵌一根短横，比黄色三角更克制、更仪表化
@@ -1145,7 +1123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var networkWasDown = false
         monitor.pathUpdateHandler = { [weak self] path in
             if path.status == .satisfied && networkWasDown {
-                DispatchQueue.main.async { self?.forceRefresh() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self?.forceRefresh() }
             }
             networkWasDown = (path.status != .satisfied)
         }
