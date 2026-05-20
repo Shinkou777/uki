@@ -59,6 +59,7 @@ INTERVAL_LOW_BATTERY = 1800
 IDLE_THRESHOLD_SEC = 600
 BACKOFF_INITIAL = 15
 BACKOFF_MAX = 120
+BACKOFF_MAX_AUTH = 900
 
 
 def log(msg: str) -> None:
@@ -334,14 +335,32 @@ def _on_sigusr1(signum, frame):
 signal.signal(signal.SIGUSR1, _on_sigusr1)
 
 
+def _is_auth_error(e: Exception) -> bool:
+    s = str(e)
+    return "401" in s or "refreshToken" in s or "no refreshToken" in s
+
+
+def _notify_auth_expired() -> None:
+    try:
+        subprocess.run([
+            "osascript", "-e",
+            'display notification "認証の有効期限が切れました。フローターの「再認証」ボタンを押してください。" '
+            'with title "ClaudeFloater" subtitle "認証失敗"'
+        ], capture_output=True, timeout=5)
+    except Exception:
+        pass
+
+
 def loop() -> None:
     log("monitor daemon starting")
     consecutive_errors = 0
+    auth_notified = False
     while True:
         interval = 300
         try:
             state = fetch_usage()
             consecutive_errors = 0
+            auth_notified = False
             interval, why = pick_interval()
             state["next_poll_in_sec"] = interval
             state["poll_reason"] = why
@@ -351,19 +370,25 @@ def loop() -> None:
             log(f"5h={u5:.0%} 7d={u7:.0%} -> sleep {interval}s ({why})")
         except Exception as e:
             consecutive_errors += 1
-            backoff = min(BACKOFF_INITIAL * (2 ** (consecutive_errors - 1)), BACKOFF_MAX)
+            auth_expired = _is_auth_error(e)
+            cap = BACKOFF_MAX_AUTH if auth_expired else BACKOFF_MAX
+            backoff = min(BACKOFF_INITIAL * (2 ** (consecutive_errors - 1)), cap)
             interval = int(backoff)
-            log(f"ERROR: {type(e).__name__}: {e} (retry #{consecutive_errors} in {interval}s)")
+            log(f"ERROR: {type(e).__name__}: {e} (retry #{consecutive_errors} in {interval}s){' [auth_expired]' if auth_expired else ''}")
+            if auth_expired and not auth_notified:
+                _notify_auth_expired()
+                auth_notified = True
             write_state({
                 "fetched_at": int(time.time()),
                 "api_source": "claude",
                 "error": f"{type(e).__name__}: {e}",
+                "auth_expired": auth_expired,
                 "five_hour": {"utilization": None, "reset_at": None, "status": None},
                 "seven_day": {"utilization": None, "reset_at": None, "status": None},
                 "overage": {"utilization": None, "reset_at": None, "status": None},
                 "primary_claim": None,
                 "next_poll_in_sec": interval,
-                "poll_reason": f"backoff #{consecutive_errors}",
+                "poll_reason": f"backoff #{consecutive_errors}" + (" (auth)" if auth_expired else ""),
             })
         # Interruptible sleep: wakes on SIGUSR1 (system wake) or after `interval`
         if _wake.wait(interval):

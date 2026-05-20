@@ -19,6 +19,7 @@ struct UsageState: Decodable {
     let overage: UsageWindow
     let primary_claim: String?
     let error: String?
+    let auth_expired: Bool?
 }
 
 struct FloaterConfig: Codable {
@@ -346,11 +347,11 @@ struct ErrorAdvice {
     let commands: [String]
 }
 
-func errorAdvice(_ err: String) -> ErrorAdvice {
-    if err.contains("401") {
+func errorAdvice(_ err: String, authExpired: Bool = false) -> ErrorAdvice {
+    if err.contains("401") || authExpired {
         return ErrorAdvice(
-            explanation: "ターミナルで以下を実行:",
-            commands: ["claude /logout", "claude /login"]
+            explanation: "認証の有効期限切れ。下のボタンで再ログイン:",
+            commands: []
         )
     }
     if err.contains("403") {
@@ -393,9 +394,12 @@ func errorAdvice(_ err: String) -> ErrorAdvice {
 // Centered vertically in the body so whitespace is balanced rather than dumped at the bottom.
 struct ErrorBanner: View {
     let error: String
+    let authExpired: Bool
+    var onReLogin: (() -> Void)?
 
     var body: some View {
-        let advice = errorAdvice(error)
+        let advice = errorAdvice(error, authExpired: authExpired)
+        let showReLogin = authExpired || error.contains("401")
         VStack(alignment: .leading, spacing: 5) {
             Spacer(minLength: 0)
             HStack(spacing: 8) {
@@ -417,8 +421,6 @@ struct ErrorBanner: View {
                 .foregroundStyle(Color(white: 0.20))
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 2)
-            // CLI commands rendered as monospace amber-on-black chips so they
-            // visually read as "things to type", not prose.
             ForEach(advice.commands, id: \.self) { cmd in
                 Text(cmd)
                     .font(.system(size: 11, weight: .bold, design: .monospaced))
@@ -428,9 +430,30 @@ struct ErrorBanner: View {
                     .background(Color.black.opacity(0.85))
                     .fixedSize()
             }
+            if showReLogin {
+                ReLoginButton(onReLogin: onReLogin)
+                    .padding(.top, 2)
+            }
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
+}
+
+struct ReLoginButton: View {
+    var onReLogin: (() -> Void)?
+    @State private var isHovering = false
+
+    var body: some View {
+        Text("再認証")
+            .font(.custom("HiraMinProN-W6", size: 12))
+            .foregroundStyle(.black)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 5)
+            .background(isHovering ? Eva.green : Eva.amber)
+            .clipShape(EvaPanel(cut: 4))
+            .overlay(EvaPanel(cut: 4).stroke(Color.white.opacity(0.3), lineWidth: 1))
+            .onHover { isHovering = $0 }
     }
 }
 
@@ -516,7 +539,9 @@ struct MaxView: View {
                 VStack(spacing: 8) {
                     if let s = loader.state {
                         if let err = s.error {
-                            ErrorBanner(error: err)
+                            ErrorBanner(error: err, authExpired: s.auth_expired == true, onReLogin: {
+                                triggerReLogin()
+                            })
                         } else {
                             MetricRow(label: "5H",  subtitle: "活動限界", util: s.five_hour.utilization ?? 0, resetAt: s.five_hour.reset_at, now: loader.now, hasError: false)
                             MetricRow(label: "7D",  subtitle: "週間限界", util: s.seven_day.utilization ?? 0, resetAt: s.seven_day.reset_at, now: loader.now, hasError: false)
@@ -615,6 +640,13 @@ struct MinView: View {
         let hasError = loader.state?.error != nil
         let util = loader.state?.five_hour.utilization ?? 0
         let remaining = max(0, min(100, Int((1 - util) * 100 + 0.5)))
+        let errTag: String = {
+            guard let err = loader.state?.error else { return "Err" }
+            if loader.state?.auth_expired == true || err.contains("401") { return "認証" }
+            if err.localizedCaseInsensitiveContains("timeout") || err.localizedCaseInsensitiveContains("urlerror") || err.localizedCaseInsensitiveContains("connection") { return "接続" }
+            if err.range(of: #"5\d\d"#, options: .regularExpression) != nil { return "障害" }
+            return "Err"
+        }()
         return HStack(spacing: 4) {
             Text("理論限界")
                 .font(mincho(13))
@@ -622,8 +654,8 @@ struct MinView: View {
                 .tracking(1)
                 .fixedSize()
             Spacer(minLength: 2)
-            Text(hasError ? "Err" : String(format: "%03d", remaining))
-                .font(lcd(13))
+            Text(hasError ? errTag : String(format: "%03d", remaining))
+                .font(hasError ? mincho(13) : lcd(13))
                 .foregroundStyle(hasError ? Eva.red : severity(util))
                 .fixedSize()
         }
@@ -692,6 +724,22 @@ func makeMenuIcon() -> NSImage {
     return img
 }
 
+// MARK: - Re-Login
+
+func triggerReLogin() {
+    let claudePath = ("~/.local/bin/claude" as NSString).expandingTildeInPath
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: claudePath)
+    task.arguments = ["auth", "login"]
+    task.standardOutput = FileHandle.nullDevice
+    task.standardError = FileHandle.nullDevice
+    do {
+        try task.run()
+    } catch {
+        NSLog("[floater] triggerReLogin failed: %@", error.localizedDescription)
+    }
+}
+
 // MARK: - App
 
 // NSPanel that accepts first-mouse clicks and can become key — fixes the
@@ -732,8 +780,10 @@ final class PanelInputView: NSView {
     var toggleHotZones: [NSRect] = []
     var refreshHotZones: [NSRect] = []
     var usageHotZones: [NSRect] = []
+    var reLoginHotZones: [NSRect] = []
     var onRefresh: (() -> Void)?
     var onUsage: (() -> Void)?
+    var onReLogin: (() -> Void)?
 
     private var initialMouse: NSPoint?
     private var initialOrigin: NSPoint?
@@ -788,8 +838,9 @@ final class PanelInputView: NSView {
         let inHot = toggleHotZones.contains(where: { $0.contains(loc) })
         let inRefresh = refreshHotZones.contains(where: { $0.contains(loc) })
         let inUsage = usageHotZones.contains(where: { $0.contains(loc) })
-        NSLog("[floater] mouseUp loc=(%.1f,%.1f) dragged=%d mini=%d inHot=%d inRefresh=%d inUsage=%d",
-              loc.x, loc.y, dragged, mini, inHot, inRefresh, inUsage)
+        let inReLogin = reLoginHotZones.contains(where: { $0.contains(loc) })
+        NSLog("[floater] mouseUp loc=(%.1f,%.1f) dragged=%d mini=%d inHot=%d inRefresh=%d inUsage=%d inReLogin=%d",
+              loc.x, loc.y, dragged, mini, inHot, inRefresh, inUsage, inReLogin)
         defer {
             initialMouse = nil
             initialOrigin = nil
@@ -801,6 +852,7 @@ final class PanelInputView: NSView {
             model.minimized = false
             return
         }
+        if inReLogin { onReLogin?(); return }
         if inRefresh { onRefresh?(); return }
         if inUsage { onUsage?(); return }
         if inHot { model.minimized = true }
@@ -1026,6 +1078,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ]
     }
 
+    static func maxReLoginHotZones(for size: NSSize) -> [NSRect] {
+        return [
+            NSRect(x: 32, y: 8, width: 80, height: 28),
+        ]
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         let host = NSHostingView(rootView: RootView(loader: loader, model: model))
         host.autoresizingMask = [.width, .height]
@@ -1066,8 +1124,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         inputView.toggleHotZones = AppDelegate.maxHotZones(for: maxSize)
         inputView.refreshHotZones = AppDelegate.maxRefreshHotZones(for: maxSize)
         inputView.usageHotZones = AppDelegate.maxUsageHotZones(for: maxSize)
+        inputView.reLoginHotZones = AppDelegate.maxReLoginHotZones(for: maxSize)
         inputView.onRefresh = { [weak self] in self?.forceRefresh() }
         inputView.onUsage = { NSWorkspace.shared.open(URL(string: "https://claude.ai/settings/usage")!) }
+        inputView.onReLogin = { [weak self] in self?.handleReLogin() }
 
         cancellable = model.$minimized.sink { [weak self] mini in
             guard let self else { return }
@@ -1103,9 +1163,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.inputView.toggleHotZones = AppDelegate.maxHotZones(for: target)
                     self.inputView.refreshHotZones = AppDelegate.maxRefreshHotZones(for: target)
                     self.inputView.usageHotZones = AppDelegate.maxUsageHotZones(for: target)
+                    self.inputView.reLoginHotZones = AppDelegate.maxReLoginHotZones(for: target)
                 } else {
                     self.inputView.refreshHotZones = []
                     self.inputView.usageHotZones = []
+                    self.inputView.reLoginHotZones = []
                     self.model.showUsageHint = false
                 }
             }
@@ -1187,6 +1249,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.refreshPollTimer = nil
                 self.model.endRefreshAnimation(success: false)
             }
+        }
+    }
+    func handleReLogin() {
+        triggerReLogin()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            self?.forceRefresh()
         }
     }
     @objc func toggleForm() { model.minimized.toggle() }
