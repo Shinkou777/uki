@@ -493,102 +493,123 @@ struct MaxView: View {
     @ObservedObject var loader: StateLoader
     @ObservedObject var model: AppModel
 
+    // Broken into computed sub-views: the full body was one expression large
+    // enough to trip "unable to type-check in reasonable time" on the CI Swift
+    // toolchain. Smaller chunks type-check independently.
+    private var isReceiving: Bool { model.isRefreshing && model.refreshResult == nil }
+
+    @ViewBuilder private var statusIndicator: some View {
+        if let s = loader.state {
+            if isReceiving {
+                TimelineView(.animation) { ctx in
+                    let t = ctx.date.timeIntervalSinceReferenceDate
+                    let v = 0.45 + 0.45 * sin(t * .pi * 2 / 1.4)
+                    Text("受信中")
+                        .font(mincho(10))
+                        .foregroundStyle(Eva.amber.opacity(v))
+                }
+                .fixedSize()
+            } else {
+                let age = max(0, Int(loader.now.timeIntervalSince1970) - s.fetched_at)
+                let stale = s.error != nil
+                HStack(spacing: 2) {
+                    Text("\(age)")
+                        .font(lcd(10))
+                        .foregroundStyle((stale ? Eva.red : Color.white).opacity(0.7))
+                        .fixedSize()
+                    Text("秒前")
+                        .font(mincho(10))
+                        .foregroundStyle((stale ? Eva.red : Color.white).opacity(0.7))
+                        .fixedSize()
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var refreshButton: some View {
+        ZStack {
+            if isReceiving {
+                TimelineView(.animation) { ctx in
+                    let t = ctx.date.timeIntervalSinceReferenceDate
+                    let v = 0.12 + 0.76 * pow((1 + sin(t * .pi * 2 / 1.4)) / 2, 1.8)
+                    Rectangle().fill(Eva.amber.opacity(v))
+                }
+                .frame(width: 14, height: 14)
+            } else if let r = model.refreshResult {
+                Rectangle()
+                    .fill(r == .success ? Eva.green : Eva.red)
+                    .frame(width: 14, height: 14)
+            }
+            Rectangle()
+                .stroke(Color.white.opacity(0.85), lineWidth: 1)
+                .frame(width: 14, height: 14)
+            Text("新")
+                .font(.custom("HiraMinProN-W6", size: 10))
+                .foregroundStyle(model.isRefreshing ? Color.black.opacity(0.8) : Color.white.opacity(0.85))
+        }
+        .frame(width: 14, height: 14)
+    }
+
+    // 最小化按钮：白色细线方框内嵌一根短横，比黄色三角更克制、更仪表化
+    private var minimizeButton: some View {
+        ZStack {
+            Rectangle()
+                .stroke(Color.white.opacity(0.85), lineWidth: 1)
+                .frame(width: 14, height: 14)
+            Rectangle()
+                .fill(Color.white.opacity(0.85))
+                .frame(width: 8, height: 1.5)
+        }
+        .frame(width: 14, height: 14)
+    }
+
+    private var titleRow: some View {
+        HStack(spacing: 8) {
+            Text("クロード稼働率")
+                .font(.custom("HiraMinProN-W6", size: 15).weight(.black))
+                .foregroundStyle(.white)
+                .tracking(2)
+                .fixedSize()
+            Spacer(minLength: 6)
+            statusIndicator
+            refreshButton
+            minimizeButton
+        }
+        // Lock the title row to exactly the gradient bar's height so the title
+        // text always lands inside the gradient regardless of how tall (or
+        // short) the body content is below it.
+        .frame(height: 30)
+        .padding(.bottom, 14)
+    }
+
+    @ViewBuilder private var contentArea: some View {
+        VStack(spacing: 8) {
+            if let s = loader.state {
+                if s.network_wait == true {
+                    NetworkWaitBanner()
+                } else if let err = s.error {
+                    ErrorBanner(error: err, authExpired: s.auth_expired == true, onReLogin: {
+                        NSWorkspace.shared.open(URL(string: "https://claude.ai/login")!)
+                    })
+                } else {
+                    MetricRow(label: "5H",  subtitle: "活動限界", util: s.five_hour.utilization ?? 0, resetAt: s.five_hour.reset_at, now: loader.now, hasError: false)
+                    MetricRow(label: "7D",  subtitle: "週間限界", util: s.seven_day.utilization ?? 0, resetAt: s.seven_day.reset_at, now: loader.now, hasError: false)
+                    MetricRow(label: "OVR", subtitle: "暴走",     util: s.overage.utilization   ?? 0, resetAt: s.overage.reset_at,   now: loader.now, hasError: false)
+                }
+            } else {
+                Text(loader.loadError ?? "同期中…")
+                    .font(mincho(12))
+                    .foregroundStyle(Color(white: 0.5))
+                    .frame(maxHeight: .infinity)
+            }
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-                HStack(spacing: 8) {
-                    Text("クロード稼働率")
-                        .font(.custom("HiraMinProN-W6", size: 15).weight(.black))
-                        .foregroundStyle(.white)
-                        .tracking(2)
-                        .fixedSize()
-                    Spacer(minLength: 6)
-                    if let s = loader.state {
-                        if model.isRefreshing && model.refreshResult == nil {
-                            TimelineView(.animation) { ctx in
-                                let t = ctx.date.timeIntervalSinceReferenceDate
-                                let v = 0.45 + 0.45 * sin(t * .pi * 2 / 1.4)
-                                Text("受信中")
-                                    .font(mincho(10))
-                                    .foregroundStyle(Eva.amber.opacity(v))
-                            }
-                            .fixedSize()
-                        } else {
-                            let age = max(0, Int(loader.now.timeIntervalSince1970) - s.fetched_at)
-                            let stale = s.error != nil
-                            HStack(spacing: 2) {
-                                Text("\(age)")
-                                    .font(lcd(10))
-                                    .foregroundStyle((stale ? Eva.red : Color.white).opacity(0.7))
-                                    .fixedSize()
-                                Text("秒前")
-                                    .font(mincho(10))
-                                    .foregroundStyle((stale ? Eva.red : Color.white).opacity(0.7))
-                                    .fixedSize()
-                            }
-                        }
-                    }
-                    ZStack {
-                        if model.isRefreshing && model.refreshResult == nil {
-                            TimelineView(.animation) { ctx in
-                                let t = ctx.date.timeIntervalSinceReferenceDate
-                                let v = 0.12 + 0.76 * pow((1 + sin(t * .pi * 2 / 1.4)) / 2, 1.8)
-                                Rectangle().fill(Eva.amber.opacity(v))
-                            }
-                            .frame(width: 14, height: 14)
-                        } else if let r = model.refreshResult {
-                            Rectangle()
-                                .fill(r == .success ? Eva.green : Eva.red)
-                                .frame(width: 14, height: 14)
-                        }
-                        Rectangle()
-                            .stroke(Color.white.opacity(0.85), lineWidth: 1)
-                            .frame(width: 14, height: 14)
-                        Text("新")
-                            .font(.custom("HiraMinProN-W6", size: 10))
-                            .foregroundStyle(model.isRefreshing ? Color.black.opacity(0.8) : Color.white.opacity(0.85))
-                    }
-                    .frame(width: 14, height: 14)
-                    // 最小化按钮：白色细线方框内嵌一根短横，比黄色三角更克制、更仪表化
-                    ZStack {
-                        Rectangle()
-                            .stroke(Color.white.opacity(0.85), lineWidth: 1)
-                            .frame(width: 14, height: 14)
-                        Rectangle()
-                            .fill(Color.white.opacity(0.85))
-                            .frame(width: 8, height: 1.5)
-                    }
-                    .frame(width: 14, height: 14)
-                }
-                // Lock the title row to exactly the gradient bar's height so the
-                // title text always lands inside the gradient regardless of how
-                // tall (or short) the body content is below it. Without this,
-                // a maxHeight:.infinity body (e.g. ErrorBanner) drags the entire
-                // VStack to fill the frame, shifting the title 8px upward into
-                // the hazard-stripe region.
-                .frame(height: 30)
-                .padding(.bottom, 14)
-
-                VStack(spacing: 8) {
-                    if let s = loader.state {
-                        if s.network_wait == true {
-                            NetworkWaitBanner()
-                        } else if let err = s.error {
-                            ErrorBanner(error: err, authExpired: s.auth_expired == true, onReLogin: {
-                                NSWorkspace.shared.open(URL(string: "https://claude.ai/login")!)
-                            })
-                        } else {
-                            MetricRow(label: "5H",  subtitle: "活動限界", util: s.five_hour.utilization ?? 0, resetAt: s.five_hour.reset_at, now: loader.now, hasError: false)
-                            MetricRow(label: "7D",  subtitle: "週間限界", util: s.seven_day.utilization ?? 0, resetAt: s.seven_day.reset_at, now: loader.now, hasError: false)
-                            MetricRow(label: "OVR", subtitle: "暴走",     util: s.overage.utilization   ?? 0, resetAt: s.overage.reset_at,   now: loader.now, hasError: false)
-                        }
-                    } else {
-                        Text(loader.loadError ?? "同期中…")
-                            .font(mincho(12))
-                            .foregroundStyle(Color(white: 0.5))
-                            .frame(maxHeight: .infinity)
-                    }
-                }
-                .frame(maxHeight: .infinity, alignment: .top)
+            titleRow
+            contentArea
         }
         .padding(EdgeInsets(top: 10, leading: 32, bottom: 4, trailing: 18))
         .frame(width: 290, height: 178)
