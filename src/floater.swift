@@ -489,6 +489,88 @@ struct NetworkWaitBanner: View {
     }
 }
 
+// Shared brand gradient stops (pink -> purple -> deep blue) used by the top bar
+// and the left side strip.
+private let evaBrandColors: [Color] = [
+    Color(red: 0.95, green: 0.20, blue: 0.55),
+    Color(red: 0.45, green: 0.10, blue: 0.85),
+    Color(red: 0.10, green: 0.10, blue: 0.55),
+]
+
+// The MAX panel's background + overlay chrome, split into ViewModifiers so each
+// modifier chain type-checks on its own. Inlined as one chain it tripped the
+// Swift type-checker's "unable to type-check in reasonable time" limit on CI.
+struct MaxBackground: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            // 顶部横向渐变（粉→紫→深蓝），作为左侧条向右的延续。放在 .background
+            // 而非 .overlay，使其在文字之下、material 之上，不挡标题。
+            .background(
+                LinearGradient(colors: evaBrandColors, startPoint: .leading, endPoint: .trailing)
+                    .frame(height: 30)
+                    .opacity(0.78)
+                    .padding(.top, 10)
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    .allowsHitTesting(false)
+            )
+            .background(
+                EvaPanel(cut: 14)
+                    .fill(.ultraThinMaterial)
+                    .opacity(0.55)
+            )
+    }
+}
+
+struct MaxOverlay: ViewModifier {
+    @ObservedObject var model: AppModel
+    func body(content: Content) -> some View {
+        content
+            .overlay(
+                EvaPanel(cut: 14)
+                    .fill(Color.white.opacity(0.03))
+                    .allowsHitTesting(false)
+            )
+            .overlay(
+                LinearGradient(colors: evaBrandColors, startPoint: .top, endPoint: .bottom)
+                    .frame(width: 14)
+                    .opacity(0.78)
+                    .allowsHitTesting(false),
+                alignment: .leading
+            )
+            .overlay(
+                RedDiagonalStripes()
+                    .frame(height: 10)
+                    .allowsHitTesting(false),
+                alignment: .top
+            )
+            .clipShape(EvaPanel(cut: 14))
+            .overlay(EvaPanel(cut: 14).stroke(Color.white.opacity(0.5), lineWidth: 1))
+            .overlay(HazardCorner(size: 14, rotated: true), alignment: .bottomTrailing)
+            .overlay(UsageHintOverlay(model: model), alignment: .topLeading)
+    }
+}
+
+struct UsageHintOverlay: View {
+    @ObservedObject var model: AppModel
+    var body: some View {
+        Group {
+            if model.showUsageHint {
+                Text("▸ 公式で使用量を確認")
+                    .font(mincho(9))
+                    .foregroundStyle(Eva.amber)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.black.opacity(0.88))
+                    .clipShape(EvaPanel(cut: 4))
+                    .overlay(EvaPanel(cut: 4).stroke(Eva.amber.opacity(0.4), lineWidth: 1))
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.15), value: model.showUsageHint)
+        .padding(.top, 44).padding(.leading, 32)
+    }
+}
+
 struct MaxView: View {
     @ObservedObject var loader: StateLoader
     @ObservedObject var model: AppModel
@@ -613,75 +695,8 @@ struct MaxView: View {
         }
         .padding(EdgeInsets(top: 10, leading: 32, bottom: 4, trailing: 18))
         .frame(width: 290, height: 178)
-        .background(
-            // 顶部横向渐变（粉→紫→深蓝），与左侧渐变同色同强度，
-            // 视觉上作为侧条向右的延续。放在 .background 而非 .overlay，
-            // 这样渐变在文字之下、material 之上，不会挡住标题。
-            LinearGradient(
-                colors: [
-                    Color(red: 0.95, green: 0.20, blue: 0.55),
-                    Color(red: 0.45, green: 0.10, blue: 0.85),
-                    Color(red: 0.10, green: 0.10, blue: 0.55)
-                ],
-                startPoint: .leading, endPoint: .trailing
-            )
-            .frame(height: 30)
-            .opacity(0.78)
-            .padding(.top, 10)
-            .frame(maxHeight: .infinity, alignment: .top)
-            .allowsHitTesting(false)
-        )
-        .background(
-            EvaPanel(cut: 14)
-                .fill(.ultraThinMaterial)
-                .opacity(0.55)
-        )
-        .overlay(
-            EvaPanel(cut: 14)
-                .fill(Color.white.opacity(0.03))
-                .allowsHitTesting(false)
-        )
-        .overlay(
-            LinearGradient(
-                colors: [
-                    Color(red: 0.95, green: 0.20, blue: 0.55),
-                    Color(red: 0.45, green: 0.10, blue: 0.85),
-                    Color(red: 0.10, green: 0.10, blue: 0.55)
-                ],
-                startPoint: .top, endPoint: .bottom
-            )
-            .frame(width: 14)
-            .opacity(0.78)
-            .allowsHitTesting(false),
-            alignment: .leading
-        )
-        .overlay(
-            RedDiagonalStripes()
-                .frame(height: 10)
-                .allowsHitTesting(false),
-            alignment: .top
-        )
-        .clipShape(EvaPanel(cut: 14))
-        .overlay(EvaPanel(cut: 14).stroke(Color.white.opacity(0.5), lineWidth: 1))
-        .overlay(HazardCorner(size: 14, rotated: true),  alignment: .bottomTrailing)
-        .overlay(
-            Group {
-                if model.showUsageHint {
-                    Text("▸ 公式で使用量を確認")
-                        .font(mincho(9))
-                        .foregroundStyle(Eva.amber)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Color.black.opacity(0.88))
-                        .clipShape(EvaPanel(cut: 4))
-                        .overlay(EvaPanel(cut: 4).stroke(Eva.amber.opacity(0.4), lineWidth: 1))
-                        .transition(.opacity)
-                }
-            }
-            .animation(.easeInOut(duration: 0.15), value: model.showUsageHint)
-            .padding(.top, 44).padding(.leading, 32),
-            alignment: .topLeading
-        )
+        .modifier(MaxBackground())
+        .modifier(MaxOverlay(model: model))
     }
 }
 
