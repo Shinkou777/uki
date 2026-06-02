@@ -20,6 +20,7 @@ struct UsageState: Decodable {
     let primary_claim: String?
     let error: String?
     let auth_expired: Bool?
+    let network_wait: Bool?
 }
 
 struct FloaterConfig: Codable {
@@ -350,8 +351,8 @@ struct ErrorAdvice {
 func errorAdvice(_ err: String, authExpired: Bool = false) -> ErrorAdvice {
     if err.contains("401") || authExpired {
         return ErrorAdvice(
-            explanation: "認証の有効期限切れ。下のボタンで再ログイン:",
-            commands: []
+            explanation: "認証の有効期限切れ。ボタンでログイン画面へ。復旧しない場合はターミナルで:",
+            commands: ["claude auth login"]
         )
     }
     if err.contains("403") {
@@ -445,7 +446,7 @@ struct ReLoginButton: View {
     @State private var isHovering = false
 
     var body: some View {
-        Text("再認証")
+        Text("ログイン画面へ")
             .font(.custom("HiraMinProN-W6", size: 12))
             .foregroundStyle(.black)
             .padding(.horizontal, 14)
@@ -454,6 +455,37 @@ struct ReLoginButton: View {
             .clipShape(EvaPanel(cut: 4))
             .overlay(EvaPanel(cut: 4).stroke(Color.white.opacity(0.3), lineWidth: 1))
             .onHover { isHovering = $0 }
+    }
+}
+
+// Shown while the monitor is waiting for the network to come back (typical for
+// a few seconds right after the machine wakes). Calm amber pulse, NOT a red
+// error — nothing is wrong, the connection just isn't up yet.
+struct NetworkWaitBanner: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Spacer(minLength: 0)
+            HStack(spacing: 8) {
+                TimelineView(.animation) { ctx in
+                    let t = ctx.date.timeIntervalSinceReferenceDate
+                    let v = 0.3 + 0.5 * (1 + sin(t * .pi * 2 / 1.6)) / 2
+                    Rectangle()
+                        .fill(Eva.amber.opacity(v))
+                        .frame(width: 10, height: 10)
+                }
+                Text("ネット復帰待ち")
+                    .font(.custom("HiraMinProN-W6", size: 15).weight(.heavy))
+                    .foregroundStyle(Eva.amber)
+                    .fixedSize()
+            }
+            Text("接続が戻り次第、自動で再取得します")
+                .font(.custom("HiraMinProN-W6", size: 11))
+                .foregroundStyle(Color(white: 0.30))
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 2)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 }
 
@@ -538,9 +570,11 @@ struct MaxView: View {
 
                 VStack(spacing: 8) {
                     if let s = loader.state {
-                        if let err = s.error {
+                        if s.network_wait == true {
+                            NetworkWaitBanner()
+                        } else if let err = s.error {
                             ErrorBanner(error: err, authExpired: s.auth_expired == true, onReLogin: {
-                                triggerReLogin()
+                                NSWorkspace.shared.open(URL(string: "https://claude.ai/login")!)
                             })
                         } else {
                             MetricRow(label: "5H",  subtitle: "活動限界", util: s.five_hour.utilization ?? 0, resetAt: s.five_hour.reset_at, now: loader.now, hasError: false)
@@ -637,6 +671,7 @@ struct MinView: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
+        let networkWait = loader.state?.network_wait == true
         let hasError = loader.state?.error != nil
         let util = loader.state?.five_hour.utilization ?? 0
         let remaining = max(0, min(100, Int((1 - util) * 100 + 0.5)))
@@ -647,6 +682,10 @@ struct MinView: View {
             if err.range(of: #"5\d\d"#, options: .regularExpression) != nil { return "障害" }
             return "Err"
         }()
+        // tag color: amber while merely waiting for the network, red for real errors
+        let statusTag = networkWait ? "待機" : errTag
+        let abnormal = networkWait || hasError
+        let tagColor = networkWait ? Eva.amber : Eva.red
         return HStack(spacing: 4) {
             Text("理論限界")
                 .font(mincho(13))
@@ -654,9 +693,9 @@ struct MinView: View {
                 .tracking(1)
                 .fixedSize()
             Spacer(minLength: 2)
-            Text(hasError ? errTag : String(format: "%03d", remaining))
-                .font(hasError ? mincho(13) : lcd(13))
-                .foregroundStyle(hasError ? Eva.red : severity(util))
+            Text(abnormal ? statusTag : String(format: "%03d", remaining))
+                .font(abnormal ? mincho(13) : lcd(13))
+                .foregroundStyle(abnormal ? tagColor : severity(util))
                 .fixedSize()
         }
         .padding(EdgeInsets(top: 4, leading: 17, bottom: 4, trailing: 8))
@@ -722,22 +761,6 @@ func makeMenuIcon() -> NSImage {
     img.unlockFocus()
     img.isTemplate = true
     return img
-}
-
-// MARK: - Re-Login
-
-func triggerReLogin() {
-    let claudePath = ("~/.local/bin/claude" as NSString).expandingTildeInPath
-    let task = Process()
-    task.executableURL = URL(fileURLWithPath: claudePath)
-    task.arguments = ["auth", "login"]
-    task.standardOutput = FileHandle.nullDevice
-    task.standardError = FileHandle.nullDevice
-    do {
-        try task.run()
-    } catch {
-        NSLog("[floater] triggerReLogin failed: %@", error.localizedDescription)
-    }
 }
 
 // MARK: - App
@@ -1080,7 +1103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     static func maxReLoginHotZones(for size: NSSize) -> [NSRect] {
         return [
-            NSRect(x: 32, y: 8, width: 80, height: 28),
+            NSRect(x: 32, y: 8, width: 140, height: 28),
         ]
     }
 
@@ -1239,7 +1262,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                s.fetched_at != startFetchedAt {
                 timer.invalidate()
                 self.refreshPollTimer = nil
-                let success = s.error == nil
+                let success = s.error == nil && s.network_wait != true
                 let delay = max(0, 1.5 - Date().timeIntervalSince(animStart))
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                     self.model.endRefreshAnimation(success: success)
@@ -1252,8 +1275,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     func handleReLogin() {
-        triggerReLogin()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+        // Open the Claude login page in the browser as a reminder/jump-off. Note
+        // this alone does NOT refresh the local keychain token the monitor reads
+        // — the banner's `claude auth login` hint is the command that truly does.
+        NSWorkspace.shared.open(URL(string: "https://claude.ai/login")!)
+        // Re-probe shortly after, in case the user fixes auth out-of-band.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
             self?.forceRefresh()
         }
     }

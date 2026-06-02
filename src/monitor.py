@@ -19,6 +19,7 @@ import json
 import os
 import re
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -60,6 +61,19 @@ IDLE_THRESHOLD_SEC = 600
 BACKOFF_INITIAL = 15
 BACKOFF_MAX = 120
 BACKOFF_MAX_AUTH = 900
+
+# Right after the machine wakes, the network interface is often up while DNS /
+# routing is not yet ready (a few seconds). Firing the API call in that window
+# fails with a DNS/connection error that has nothing to do with auth. We gate on
+# reachability and use a short retry instead of surfacing a scary error banner.
+NETWORK_WAIT_RETRY = 8       # fast retry while waiting for the network to return
+NETWORK_WAIT_RETRY_MAX = 30  # back off the wait a little if it persists
+NETWORK_WAIT_FAST_TRIES = 8  # how many fast tries before slowing to the max
+
+
+class AuthExpired(Exception):
+    """The OAuth refresh token itself was rejected / missing — re-login needed.
+    Distinct from a transient network failure during refresh."""
 
 
 def log(msg: str) -> None:
@@ -302,9 +316,20 @@ def fetch_usage() -> dict:
             log("HTTP 401: refreshing OAuth token and retrying")
             try:
                 new_token = refresh_oauth_token()
-            except Exception as refresh_err:
-                log(f"refresh failed: {type(refresh_err).__name__}: {refresh_err}")
+            except urllib.error.HTTPError as refresh_err:
+                # Token endpoint rejected the refresh token (401/403/...) — the
+                # refresh token is expired or revoked. Genuine auth expiry.
+                log(f"refresh rejected: HTTP {refresh_err.code} -> re-login required")
+                raise AuthExpired(f"refresh rejected: HTTP {refresh_err.code}")
+            except urllib.error.URLError as refresh_err:
+                # Network problem reaching the token endpoint — NOT auth. Let the
+                # loop classify it as a transient network error.
+                log(f"refresh network error: {refresh_err}")
                 raise
+            except Exception as refresh_err:
+                # e.g. no refreshToken in keychain — re-login required.
+                log(f"refresh failed: {type(refresh_err).__name__}: {refresh_err}")
+                raise AuthExpired(str(refresh_err))
             try:
                 headers = _do_fetch(new_token)
             except urllib.error.HTTPError as retry_err:
@@ -336,8 +361,63 @@ signal.signal(signal.SIGUSR1, _on_sigusr1)
 
 
 def _is_auth_error(e: Exception) -> bool:
+    if isinstance(e, AuthExpired):
+        return True
     s = str(e)
     return "401" in s or "refreshToken" in s or "no refreshToken" in s
+
+
+def _is_network_error(e: Exception) -> bool:
+    """Transient connectivity failure (DNS not ready, no route, timeout) — the
+    kind we see for a few seconds right after the machine wakes. NOT an HTTP
+    error from the API (those carry a status code and are handled separately)."""
+    if isinstance(e, urllib.error.HTTPError):
+        return False
+    if isinstance(e, (urllib.error.URLError, socket.gaierror, socket.timeout, TimeoutError, OSError)):
+        return True
+    s = str(e).lower()
+    return any(t in s for t in (
+        "urlerror", "nodename nor servname", "not known", "timed out",
+        "connection refused", "network is unreachable", "no route to host",
+        "temporary failure in name resolution",
+    ))
+
+
+def _network_reachable(host: str = "api.anthropic.com", timeout: float = 3.0) -> bool:
+    """Cheap pre-flight: can we resolve + open a TCP socket to the API host?
+    Catches the post-wake window where the interface is up but DNS/routing
+    isn't, so we never fire a doomed request that looks like a hard error."""
+    try:
+        infos = socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)
+    except OSError:
+        return False
+    for family, socktype, proto, _canon, sockaddr in infos:
+        s = socket.socket(family, socktype, proto)
+        s.settimeout(timeout)
+        try:
+            s.connect(sockaddr)
+            return True
+        except OSError:
+            continue
+        finally:
+            s.close()
+    return False
+
+
+def _network_wait_state(interval: int, tries: int) -> dict:
+    return {
+        "fetched_at": int(time.time()),
+        "api_source": "claude",
+        "network_wait": True,
+        "error": None,
+        "auth_expired": False,
+        "five_hour": {"utilization": None, "reset_at": None, "status": None},
+        "seven_day": {"utilization": None, "reset_at": None, "status": None},
+        "overage": {"utilization": None, "reset_at": None, "status": None},
+        "primary_claim": None,
+        "next_poll_in_sec": interval,
+        "poll_reason": f"network-wait #{tries}",
+    }
 
 
 def _notify_auth_expired() -> None:
@@ -355,8 +435,23 @@ def loop() -> None:
     log("monitor daemon starting")
     consecutive_errors = 0
     auth_notified = False
+    net_wait_count = 0
     while True:
         interval = 300
+
+        # Reachability gate: skip the doomed request while the network is still
+        # coming back (typical for a few seconds after wake). Show a calm
+        # "waiting for network" state and retry quickly instead of an error.
+        if not _network_reachable():
+            net_wait_count += 1
+            interval = NETWORK_WAIT_RETRY if net_wait_count <= NETWORK_WAIT_FAST_TRIES else NETWORK_WAIT_RETRY_MAX
+            log(f"network unreachable, waiting (#{net_wait_count}, retry {interval}s)")
+            write_state(_network_wait_state(interval, net_wait_count))
+            if _wake.wait(interval):
+                _wake.clear()
+            continue
+        net_wait_count = 0
+
         try:
             state = fetch_usage()
             consecutive_errors = 0
@@ -369,6 +464,18 @@ def loop() -> None:
             u7 = state["seven_day"]["utilization"] or 0
             log(f"5h={u5:.0%} 7d={u7:.0%} -> sleep {interval}s ({why})")
         except Exception as e:
+            # Transient connectivity failure that slipped past the gate (DNS
+            # resolved but the TLS connect dropped, etc.) — treat as network-wait,
+            # never as a hard/auth error.
+            if _is_network_error(e):
+                net_wait_count += 1
+                interval = NETWORK_WAIT_RETRY if net_wait_count <= NETWORK_WAIT_FAST_TRIES else NETWORK_WAIT_RETRY_MAX
+                log(f"network error: {type(e).__name__}: {e} (network-wait #{net_wait_count}, retry {interval}s)")
+                write_state(_network_wait_state(interval, net_wait_count))
+                if _wake.wait(interval):
+                    _wake.clear()
+                continue
+            net_wait_count = 0
             consecutive_errors += 1
             auth_expired = _is_auth_error(e)
             cap = BACKOFF_MAX_AUTH if auth_expired else BACKOFF_MAX
