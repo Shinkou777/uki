@@ -671,7 +671,7 @@ struct MaxView: View {
                     NetworkWaitBanner()
                 } else if let err = s.error {
                     ErrorBanner(error: err, authExpired: s.auth_expired == true, onReLogin: {
-                        NSWorkspace.shared.open(URL(string: "https://claude.ai/login")!)
+                        (NSApp.delegate as? AppDelegate)?.handleReLogin()
                     })
                 } else {
                     MetricRow(label: "5H",  subtitle: "活動限界", util: s.five_hour.utilization ?? 0, resetAt: s.five_hour.reset_at, now: loader.now, hasError: false)
@@ -1311,12 +1311,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     func handleReLogin() {
-        // Open the Claude login page in the browser as a reminder/jump-off. Note
-        // this alone does NOT refresh the local keychain token the monitor reads
-        // — the banner's `claude auth login` hint is the command that truly does.
-        NSWorkspace.shared.open(URL(string: "https://claude.ai/login")!)
-        // Re-probe shortly after, in case the user fixes auth out-of-band.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+        // Run the real `claude auth login` OAuth flow — same as Claude Code. This
+        // opens a browser consent window AND writes a fresh refresh token back to
+        // the keychain (which the monitor reads). Just opening claude.ai/login in a
+        // browser does NOT refresh the keychain, so the monitor would stay broken.
+        //
+        // We launch it in Terminal because the flow is interactive (prints a URL /
+        // waits on a localhost callback). Use the absolute binary path to bypass any
+        // shell alias (e.g. `claude` aliased to `claude --dangerously-skip-permissions`,
+        // which would mangle the subcommand).
+        let claudePath = "\(NSHomeDirectory())/.local/bin/claude"
+        let cmd = "'\(claudePath)' auth login"
+        let script = """
+        tell application "Terminal"
+            activate
+            do script "\(cmd)"
+        end tell
+        """
+        if let osa = NSAppleScript(source: script) {
+            var err: NSDictionary?
+            osa.executeAndReturnError(&err)
+            if let err = err {
+                NSLog("[floater] reLogin osascript error: %@", err)
+                // Fallback: at least surface the login page so the user isn't stuck.
+                NSWorkspace.shared.open(URL(string: "https://claude.ai/login")!)
+            }
+        }
+        // After the user finishes the browser flow, kick the monitor to re-read the
+        // keychain immediately instead of waiting out its auth backoff.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in
+            let task = Process()
+            task.launchPath = "/usr/bin/pkill"
+            task.arguments = ["-USR1", "-f", "monitor.py"]
+            try? task.run()
             self?.forceRefresh()
         }
     }
