@@ -5,9 +5,9 @@ Polls Anthropic API rate-limit response headers and writes the current
 5h / 7d / overage window state to ~/.claude-usage-monitor/state.json.
 
 Adaptive polling:
-  - active on AC      -> every 3 min
-  - active on battery -> every 5 min
-  - idle (>10 min)    -> every 30 min
+  - active on AC      -> every 90 sec
+  - active on battery -> every 3 min
+  - idle (>10 min)    -> every 30 min (but wakes immediately when you return)
   - battery < 30%     -> every 30 min
 
 Run modes:
@@ -53,11 +53,14 @@ OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 # platform.claude.com rejects refresh requests without a claude-cli UA (HTTP 403).
 OAUTH_USER_AGENT = "claude-cli/2.1.133 (external, cli)"
 
-INTERVAL_ACTIVE_AC = 180
-INTERVAL_ACTIVE_BATT = 300
+INTERVAL_ACTIVE_AC = 90
+INTERVAL_ACTIVE_BATT = 180
 INTERVAL_IDLE = 1800
 INTERVAL_LOW_BATTERY = 1800
 IDLE_THRESHOLD_SEC = 600
+# While in a long idle sleep, re-check activity this often so we can wake and
+# refresh as soon as the user comes back instead of waiting out the full 30 min.
+ACTIVITY_RECHECK_SEC = 30
 BACKOFF_INITIAL = 15
 BACKOFF_MAX = 120
 BACKOFF_MAX_AUTH = 900
@@ -360,6 +363,27 @@ def _on_sigusr1(signum, frame):
 signal.signal(signal.SIGUSR1, _on_sigusr1)
 
 
+def sleep_until_next(interval: int, watch_activity: bool) -> str:
+    """Sleep up to `interval` seconds. Returns why we woke:
+      "wake"    - SIGUSR1 (system wake / forced refresh from the floater)
+      "active"  - user became active again during a long idle sleep
+      "timeout" - the full interval elapsed
+
+    When watch_activity is set (long idle/low-battery sleeps), we poll the HID
+    idle timer every ACTIVITY_RECHECK_SEC and break the moment the user is back,
+    so the display refreshes promptly instead of staying up to 30 min stale."""
+    remaining = interval
+    while remaining > 0:
+        chunk = min(ACTIVITY_RECHECK_SEC, remaining) if watch_activity else remaining
+        if _wake.wait(chunk):
+            _wake.clear()
+            return "wake"
+        remaining -= chunk
+        if watch_activity and get_idle_seconds() <= IDLE_THRESHOLD_SEC:
+            return "active"
+    return "timeout"
+
+
 def _is_auth_error(e: Exception) -> bool:
     if isinstance(e, AuthExpired):
         return True
@@ -497,11 +521,15 @@ def loop() -> None:
                 "next_poll_in_sec": interval,
                 "poll_reason": f"backoff #{consecutive_errors}" + (" (auth)" if auth_expired else ""),
             })
-        # Interruptible sleep: wakes on SIGUSR1 (system wake) or after `interval`
-        if _wake.wait(interval):
-            _wake.clear()
+        # Interruptible sleep: wakes on SIGUSR1 (system wake / forced refresh),
+        # on the user returning from a long idle, or after `interval` elapses.
+        watch_activity = interval >= INTERVAL_IDLE
+        reason = sleep_until_next(interval, watch_activity)
+        if reason == "wake":
             consecutive_errors = 0
             log("woken early by SIGUSR1")
+        elif reason == "active":
+            log("user active again -> refreshing early")
 
 
 if __name__ == "__main__":

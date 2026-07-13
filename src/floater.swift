@@ -51,8 +51,10 @@ final class StateLoader: ObservableObject {
 
     init() {
         load()
-        fileTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in self?.load() }
-        clockTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in self?.now = Date() }
+        // Pick up a fresh state.json quickly, and tick the "X秒前" age label every
+        // few seconds so it never looks frozen between the monitor's polls.
+        fileTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in self?.load() }
+        clockTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in self?.now = Date() }
     }
 
     func load() {
@@ -843,6 +845,9 @@ final class PanelInputView: NSView {
     var onRefresh: (() -> Void)?
     var onUsage: (() -> Void)?
     var onReLogin: (() -> Void)?
+    // Built fresh on each right-click so item titles reflect the current form
+    // (最小化 vs 展開). Supplied by AppDelegate, which owns all the actions.
+    var contextMenuProvider: (() -> NSMenu)?
 
     private var initialMouse: NSPoint?
     private var initialOrigin: NSPoint?
@@ -877,6 +882,14 @@ final class PanelInputView: NSView {
         initialMouse = NSEvent.mouseLocation
         initialOrigin = window?.frame.origin
         didDrag = false
+    }
+
+    // Right-click anywhere on the floater -> context menu (最小化/展開 など).
+    // The nonactivating panel doesn't route to the AppDelegate via the responder
+    // chain, so the menu items carry explicit targets (set in buildContextMenu).
+    override func rightMouseDown(with event: NSEvent) {
+        guard let menu = contextMenuProvider?() else { return }
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -1187,6 +1200,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         inputView.onRefresh = { [weak self] in self?.forceRefresh() }
         inputView.onUsage = { NSWorkspace.shared.open(URL(string: "https://claude.ai/settings/usage")!) }
         inputView.onReLogin = { [weak self] in self?.handleReLogin() }
+        inputView.contextMenuProvider = { [weak self] in self?.buildContextMenu() ?? NSMenu() }
 
         cancellable = model.$minimized.sink { [weak self] mini in
             guard let self else { return }
@@ -1348,6 +1362,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     @objc func toggleForm() { model.minimized.toggle() }
+
+    // Right-click context menu for the floating panel itself. Rebuilt on every
+    // right-click so the first item reads 最小化 (when expanded) or 展開 (when
+    // minimized). Items target self explicitly — a popped-up context menu on a
+    // nonactivating panel does not reach the AppDelegate through the responder chain.
+    func buildContextMenu() -> NSMenu {
+        let menu = NSMenu()
+        let item: (String, Selector) -> NSMenuItem = { title, sel in
+            let mi = NSMenuItem(title: title, action: sel, keyEquivalent: "")
+            mi.target = self
+            return mi
+        }
+        menu.addItem(item(model.minimized ? "展開" : "最小化", #selector(toggleForm)))
+        menu.addItem(item("今すぐ更新", #selector(forceRefresh)))
+        menu.addItem(.separator())
+        menu.addItem(item("位置リセット", #selector(resetPosition)))
+        menu.addItem(item("使用状況 (claude.ai)", #selector(openUsagePage)))
+        menu.addItem(item("フローターを隠す", #selector(toggleVisibility)))
+        menu.addItem(item("設定", #selector(showSettings)))
+        menu.addItem(.separator())
+        menu.addItem(item("終了", #selector(NSApplication.terminate(_:))))
+        return menu
+    }
     @objc func openUsagePage() {
         NSWorkspace.shared.open(URL(string: "https://claude.ai/settings/usage")!)
     }
