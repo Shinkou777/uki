@@ -771,33 +771,100 @@ struct RootView: View {
     }
 }
 
-// MARK: - Menu bar icon (black-and-white CC circle, template adapts to light/dark)
+// MARK: - Menu bar icon (template glyphs; several styles, live usage-driven)
 
-func makeMenuIcon() -> NSImage {
-    let size: CGFloat = 18
-    let img = NSImage(size: NSSize(width: size, height: size))
+let kMenuIconStyleKey = "menuIconStyle"
+
+// User-selectable menu-bar icon styles. The live ones (signal/batt/ring) redraw
+// with the current usage %, so the menu bar itself is a gauge.
+let menuIconStyles: [(id: String, label: String)] = [
+    ("signal", "信号格"),
+    ("batt-remain", "電池・残量"),
+    ("batt-usage", "電池・使用量"),
+    ("ring", "リング"),
+    ("cc", "CC マーク"),
+]
+
+// The binding constraint right now = whichever of 5h / 7d is more used. nil when
+// there's no usable reading (error / network-wait), so the icon shows an idle look.
+func representativeUtil(_ s: UsageState?) -> Double? {
+    guard let s, s.network_wait != true, s.error == nil else { return nil }
+    let vals = [s.five_hour.utilization, s.seven_day.utilization].compactMap { $0 }
+    return vals.max()
+}
+
+private func drawMenuGlyph(_ style: String, util: Double?, color: NSColor) {
+    let hasReading = util != nil
+    let u = CGFloat(max(0, min(1, util ?? 0)))
+    switch style {
+    case "signal":
+        // 4 bars; lit count grows with usage, unlit bars stay faint.
+        let litCount = hasReading ? max(1, Int(ceil(u * 4))) : 0
+        let xs: [CGFloat] = [2, 5.8, 9.6, 13.4]
+        let hs: [CGFloat] = [4, 7.5, 11, 14.5]
+        for i in 0..<4 {
+            color.withAlphaComponent(i < litCount ? 1.0 : 0.25).setFill()
+            NSBezierPath(roundedRect: NSRect(x: xs[i], y: 2, width: 2.6, height: hs[i]),
+                         xRadius: 0.6, yRadius: 0.6).fill()
+        }
+    case "batt-remain", "batt-usage":
+        // remain: fill depletes as you burn quota (full = plenty left).
+        // usage:  fill grows as you burn quota (full = near the limit).
+        let level = hasReading ? (style == "batt-remain" ? (1 - u) : u) : 0
+        let body = NSRect(x: 1.5, y: 4.5, width: 12.5, height: 9)
+        let bp = NSBezierPath(roundedRect: body, xRadius: 1.8, yRadius: 1.8)
+        bp.lineWidth = 1.2
+        color.setStroke(); bp.stroke()
+        color.setFill()
+        NSBezierPath(roundedRect: NSRect(x: 14.2, y: 7, width: 1.7, height: 4),
+                     xRadius: 0.5, yRadius: 0.5).fill()
+        if hasReading {
+            let fw = max(0.8, 9.3 * level)
+            NSBezierPath(roundedRect: NSRect(x: 3.1, y: 6.1, width: fw, height: 5.4),
+                         xRadius: 0.7, yRadius: 0.7).fill()
+        }
+    case "ring":
+        let c = NSPoint(x: 9, y: 9)
+        let radius: CGFloat = 6.4
+        let lw: CGFloat = 2.2
+        let track = NSBezierPath()
+        track.appendArc(withCenter: c, radius: radius, startAngle: 0, endAngle: 360)
+        track.lineWidth = lw
+        color.withAlphaComponent(0.25).setStroke(); track.stroke()
+        if hasReading && u > 0 {
+            let fill = NSBezierPath()
+            fill.appendArc(withCenter: c, radius: radius, startAngle: 90,
+                           endAngle: 90 - 360 * u, clockwise: true)
+            fill.lineWidth = lw
+            fill.lineCapStyle = .round
+            color.setStroke(); fill.stroke()
+        }
+        color.withAlphaComponent(hasReading ? 1 : 0.3).setFill()
+        NSBezierPath(ovalIn: NSRect(x: 8.1, y: 8.1, width: 1.8, height: 1.8)).fill()
+    default:  // "cc" — original static mark
+        let circle = NSBezierPath(ovalIn: NSRect(x: 1, y: 1, width: 16, height: 16))
+        circle.lineWidth = 1.3
+        color.setStroke(); circle.stroke()
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 8, weight: .heavy),
+            .foregroundColor: color,
+        ]
+        let str = "CC" as NSString
+        let sz = str.size(withAttributes: attrs)
+        str.draw(at: NSPoint(x: (18 - sz.width) / 2, y: (18 - sz.height) / 2 - 0.5),
+                 withAttributes: attrs)
+    }
+}
+
+// template=true -> black glyph, system re-tints for light/dark menu bar.
+// template=false + tint -> a fixed color, for previews inside the settings window.
+func makeMenuIcon(style: String = "signal", util: Double? = nil,
+                  template: Bool = true, tint: NSColor = .black) -> NSImage {
+    let img = NSImage(size: NSSize(width: 18, height: 18))
     img.lockFocus()
-
-    let inset: CGFloat = 1
-    let circleRect = NSRect(x: inset, y: inset, width: size - inset * 2, height: size - inset * 2)
-    let circle = NSBezierPath(ovalIn: circleRect)
-    circle.lineWidth = 1.3
-    NSColor.black.setStroke()
-    circle.stroke()
-
-    let attrs: [NSAttributedString.Key: Any] = [
-        .font: NSFont.systemFont(ofSize: 8, weight: .heavy),
-        .foregroundColor: NSColor.black,
-    ]
-    let str = "CC" as NSString
-    let strSize = str.size(withAttributes: attrs)
-    str.draw(
-        at: NSPoint(x: (size - strSize.width) / 2, y: (size - strSize.height) / 2 - 0.5),
-        withAttributes: attrs
-    )
-
+    drawMenuGlyph(style, util: util, color: template ? .black : tint)
     img.unlockFocus()
-    img.isTemplate = true
+    img.isTemplate = template
     return img
 }
 
@@ -1046,13 +1113,46 @@ struct InvisibleButton: NSViewRepresentable {
 
 // MARK: - Settings
 
+// A row of tappable icon thumbnails. Previews render at a fixed sample usage
+// (~65%) so every style is distinguishable regardless of the current reading.
+struct IconPickerRow: View {
+    @Binding var selected: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(menuIconStyles, id: \.id) { style in
+                let isSel = selected == style.id
+                VStack(spacing: 5) {
+                    Image(nsImage: makeMenuIcon(style: style.id, util: 0.65,
+                                                template: false, tint: NSColor.labelColor))
+                        .resizable()
+                        .interpolation(.none)
+                        .frame(width: 34, height: 34)
+                    Text(style.label)
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(width: 72, height: 62)
+                .background(RoundedRectangle(cornerRadius: 8)
+                    .fill(isSel ? Color.accentColor.opacity(0.18) : Color.gray.opacity(0.08)))
+                .overlay(RoundedRectangle(cornerRadius: 8)
+                    .stroke(isSel ? Color.accentColor : Color.clear, lineWidth: 1.5))
+                .contentShape(Rectangle())
+                .onTapGesture { selected = style.id }
+            }
+        }
+    }
+}
+
 struct SettingsView: View {
     @State private var apiSource = "claude_oauth"
     @State private var apiKey = ""
     @State private var status = ""
+    @State private var iconStyle = UserDefaults.standard.string(forKey: kMenuIconStyleKey) ?? "signal"
     var onSave: (() -> Void)?
+    var onIconChange: (() -> Void)?
 
-    var body: some View {
+    private var apiSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("API 設定")
                 .font(.custom("HiraMinProN-W6", size: 18))
@@ -1073,21 +1173,48 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
 
-            HStack {
-                if !status.isEmpty {
-                    Text(status)
-                        .font(.caption)
-                        .foregroundStyle(status.contains("エラー") ? .red : .green)
+    private var iconSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("メニューバーアイコン")
+                .font(.custom("HiraMinProN-W6", size: 18))
+            IconPickerRow(selected: $iconStyle)
+                .onChange(of: iconStyle) { newVal in
+                    UserDefaults.standard.set(newVal, forKey: kMenuIconStyleKey)
+                    onIconChange?()
                 }
-                Spacer()
-                Button("保存") { save() }
-                    .disabled(apiSource != "claude_oauth" && apiKey.isEmpty)
-                    .keyboardShortcut(.defaultAction)
+            Text("信号格・電池・リングは現在の使用率をリアルタイム表示します")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var saveRow: some View {
+        HStack {
+            if !status.isEmpty {
+                Text(status)
+                    .font(.caption)
+                    .foregroundStyle(status.contains("エラー") ? .red : .green)
             }
+            Spacer()
+            Button("保存") { save() }
+                .disabled(apiSource != "claude_oauth" && apiKey.isEmpty)
+                .keyboardShortcut(.defaultAction)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            apiSection
+            Divider()
+            iconSection
+            Divider()
+            saveRow
         }
         .padding(20)
-        .frame(width: 420)
+        .frame(width: 440)
         .onAppear { loadConfig() }
     }
 
@@ -1118,6 +1245,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let loader = StateLoader()
     let model = AppModel.shared
     var cancellable: AnyCancellable?
+    var iconCancellable: AnyCancellable?
     var refreshPollTimer: Timer?
     var pathMonitor: NWPathMonitor?
     var toggleVisibilityItem: NSMenuItem?
@@ -1248,6 +1376,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         setupMenuBar()
 
+        // Redraw the menu-bar icon whenever a fresh state lands (every ~5s / on
+        // refresh) so the live styles track the current usage %.
+        iconCancellable = loader.$state
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.updateMenuBarIcon() }
+
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -1272,9 +1406,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func updateMenuBarIcon() {
+        let style = UserDefaults.standard.string(forKey: kMenuIconStyleKey) ?? "signal"
+        statusItem?.button?.image = makeMenuIcon(style: style, util: representativeUtil(loader.state))
+    }
+
     func setupMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.image = makeMenuIcon()
+        updateMenuBarIcon()
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "今すぐ更新",   action: #selector(forceRefresh),     keyEquivalent: "r"))
         menu.addItem(NSMenuItem(title: "形態切替",     action: #selector(toggleForm),       keyEquivalent: "m"))
@@ -1402,10 +1541,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             w.makeKeyAndOrderFront(nil)
             return
         }
-        let view = SettingsView { [weak self] in self?.restartMonitor() }
+        let view = SettingsView(
+            onSave: { [weak self] in self?.restartMonitor() },
+            onIconChange: { [weak self] in self?.updateMenuBarIcon() }
+        )
         let hosting = NSHostingView(rootView: view)
         let w = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 260),
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 440),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
