@@ -775,54 +775,86 @@ struct RootView: View {
 
 let kMenuIconStyleKey = "menuIconStyle"
 
-// User-selectable menu-bar icon styles. The live ones (signal/batt/ring) redraw
-// with the current usage %, so the menu bar itself is a gauge.
+// User-selectable menu-bar icon styles. The live ones (octagon/hazard/ring)
+// redraw with the current usage %, so the menu bar itself is a gauge. octagon &
+// hazard echo the floater's EVA/NERV octagon frame + hazard stripes.
 let menuIconStyles: [(id: String, label: String)] = [
-    ("signal", "信号格"),
-    ("batt-remain", "電池・残量"),
-    ("batt-usage", "電池・使用量"),
+    ("octagon", "八角ゲージ"),
+    ("hazard", "ハザードバー"),
     ("ring", "リング"),
     ("cc", "CC マーク"),
 ]
 
-// The binding constraint right now = whichever of 5h / 7d is more used. nil when
-// there's no usable reading (error / network-wait), so the icon shows an idle look.
+// Fall back to the default when the stored style is empty or one we dropped.
+func currentIconStyle() -> String {
+    let s = UserDefaults.standard.string(forKey: kMenuIconStyleKey) ?? "octagon"
+    return menuIconStyles.contains { $0.id == s } ? s : "octagon"
+}
+
+// Regular octagon centered at (cx,cy), circumradius R.
+private func octagonPath(_ cx: CGFloat, _ cy: CGFloat, _ R: CGFloat) -> NSBezierPath {
+    let p = NSBezierPath()
+    for k in 0..<8 {
+        let a = (22.5 + 45 * Double(k)) * Double.pi / 180
+        let pt = NSPoint(x: cx + R * CGFloat(cos(a)), y: cy + R * CGFloat(sin(a)))
+        if k == 0 { p.move(to: pt) } else { p.line(to: pt) }
+    }
+    p.close()
+    return p
+}
+
+// Track the window the API flags as representative (`primary_claim`) — usually
+// the 5h, the one that actually climbs as you work. The old max(5h,7d) pinned the
+// icon to the slow-moving 7d, so it looked frozen ("just an ornament"). nil when
+// there's no usable reading (error / network-wait) -> icon shows an idle look.
 func representativeUtil(_ s: UsageState?) -> Double? {
     guard let s, s.network_wait != true, s.error == nil else { return nil }
-    let vals = [s.five_hour.utilization, s.seven_day.utilization].compactMap { $0 }
-    return vals.max()
+    switch s.primary_claim {
+    case "seven_day": return s.seven_day.utilization ?? s.five_hour.utilization
+    case "five_hour": return s.five_hour.utilization ?? s.seven_day.utilization
+    default:
+        return [s.five_hour.utilization, s.seven_day.utilization].compactMap { $0 }.max()
+    }
 }
 
 private func drawMenuGlyph(_ style: String, util: Double?, color: NSColor) {
     let hasReading = util != nil
     let u = CGFloat(max(0, min(1, util ?? 0)))
     switch style {
-    case "signal":
-        // 4 bars; lit count grows with usage, unlit bars stay faint.
-        let litCount = hasReading ? max(1, Int(ceil(u * 4))) : 0
-        let xs: [CGFloat] = [2, 5.8, 9.6, 13.4]
-        let hs: [CGFloat] = [4, 7.5, 11, 14.5]
-        for i in 0..<4 {
-            color.withAlphaComponent(i < litCount ? 1.0 : 0.25).setFill()
-            NSBezierPath(roundedRect: NSRect(x: xs[i], y: 2, width: 2.6, height: hs[i]),
-                         xRadius: 0.6, yRadius: 0.6).fill()
+    case "octagon":
+        // Liquid level rising from the bottom of an octagon (EVA instrument frame).
+        let oct = octagonPath(9, 9, 7.8)
+        if hasReading {
+            NSGraphicsContext.saveGraphicsState()
+            oct.addClip()
+            color.setFill()
+            NSRect(x: 0, y: 9 - 7.8, width: 18, height: 15.6 * u).fill()
+            NSGraphicsContext.restoreGraphicsState()
         }
-    case "batt-remain", "batt-usage":
-        // remain: fill depletes as you burn quota (full = plenty left).
-        // usage:  fill grows as you burn quota (full = near the limit).
-        let level = hasReading ? (style == "batt-remain" ? (1 - u) : u) : 0
-        let body = NSRect(x: 1.5, y: 4.5, width: 12.5, height: 9)
-        let bp = NSBezierPath(roundedRect: body, xRadius: 1.8, yRadius: 1.8)
+        oct.lineWidth = 1.2
+        color.setStroke(); oct.stroke()
+    case "hazard":
+        // Rounded bar whose fill (grows with usage) is EVA hazard diagonal hatch.
+        let body = NSRect(x: 1.5, y: 5, width: 15, height: 8)
+        let bp = NSBezierPath(roundedRect: body, xRadius: 2, yRadius: 2)
+        if hasReading {
+            NSGraphicsContext.saveGraphicsState()
+            NSBezierPath(roundedRect: NSRect(x: 1.5, y: 5, width: max(0, 15 * u), height: 8),
+                         xRadius: 2, yRadius: 2).addClip()
+            color.setFill()
+            var x: CGFloat = -10
+            let step: CGFloat = 3.2, sw: CGFloat = 1.7, h: CGFloat = 8
+            while x < 18 {
+                let p = NSBezierPath()
+                p.move(to: NSPoint(x: x, y: 5)); p.line(to: NSPoint(x: x + sw, y: 5))
+                p.line(to: NSPoint(x: x + sw + h, y: 13)); p.line(to: NSPoint(x: x + h, y: 13))
+                p.close(); p.fill()
+                x += step
+            }
+            NSGraphicsContext.restoreGraphicsState()
+        }
         bp.lineWidth = 1.2
         color.setStroke(); bp.stroke()
-        color.setFill()
-        NSBezierPath(roundedRect: NSRect(x: 14.2, y: 7, width: 1.7, height: 4),
-                     xRadius: 0.5, yRadius: 0.5).fill()
-        if hasReading {
-            let fw = max(0.8, 9.3 * level)
-            NSBezierPath(roundedRect: NSRect(x: 3.1, y: 6.1, width: fw, height: 5.4),
-                         xRadius: 0.7, yRadius: 0.7).fill()
-        }
     case "ring":
         let c = NSPoint(x: 9, y: 9)
         let radius: CGFloat = 6.4
@@ -858,7 +890,7 @@ private func drawMenuGlyph(_ style: String, util: Double?, color: NSColor) {
 
 // template=true -> black glyph, system re-tints for light/dark menu bar.
 // template=false + tint -> a fixed color, for previews inside the settings window.
-func makeMenuIcon(style: String = "signal", util: Double? = nil,
+func makeMenuIcon(style: String = "octagon", util: Double? = nil,
                   template: Bool = true, tint: NSColor = .black) -> NSImage {
     let img = NSImage(size: NSSize(width: 18, height: 18))
     img.lockFocus()
@@ -1148,7 +1180,7 @@ struct SettingsView: View {
     @State private var apiSource = "claude_oauth"
     @State private var apiKey = ""
     @State private var status = ""
-    @State private var iconStyle = UserDefaults.standard.string(forKey: kMenuIconStyleKey) ?? "signal"
+    @State private var iconStyle = currentIconStyle()
     var onSave: (() -> Void)?
     var onIconChange: (() -> Void)?
 
@@ -1407,8 +1439,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func updateMenuBarIcon() {
-        let style = UserDefaults.standard.string(forKey: kMenuIconStyleKey) ?? "signal"
-        statusItem?.button?.image = makeMenuIcon(style: style, util: representativeUtil(loader.state))
+        statusItem?.button?.image = makeMenuIcon(style: currentIconStyle(), util: representativeUtil(loader.state))
     }
 
     func setupMenuBar() {
