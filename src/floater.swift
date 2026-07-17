@@ -779,23 +779,25 @@ let kMenuIconStyleKey = "menuIconStyle"
 // redraw with the current usage %, so the menu bar itself is a gauge. octagon &
 // hazard echo the floater's EVA/NERV octagon frame + hazard stripes.
 let menuIconStyles: [(id: String, label: String)] = [
-    ("octagon", "八角ゲージ"),
+    ("hexagon", "六角ゲージ"),
     ("hazard", "ハザードバー"),
     ("ring", "リング"),
     ("cc", "CC マーク"),
 ]
 
-// Fall back to the default when the stored style is empty or one we dropped.
+// Fall back to the default when the stored style is empty or one we dropped
+// (e.g. the old octagon / signal / battery values).
 func currentIconStyle() -> String {
-    let s = UserDefaults.standard.string(forKey: kMenuIconStyleKey) ?? "octagon"
-    return menuIconStyles.contains { $0.id == s } ? s : "octagon"
+    let s = UserDefaults.standard.string(forKey: kMenuIconStyleKey) ?? "hexagon"
+    return menuIconStyles.contains { $0.id == s } ? s : "hexagon"
 }
 
-// Regular octagon centered at (cx,cy), circumradius R.
-private func octagonPath(_ cx: CGFloat, _ cy: CGFloat, _ R: CGFloat) -> NSBezierPath {
+// Regular flat-top hexagon centered at (cx,cy), circumradius R (horizontal top
+// and bottom edges -> clean liquid fill line; pointy left/right).
+private func hexagonPath(_ cx: CGFloat, _ cy: CGFloat, _ R: CGFloat) -> NSBezierPath {
     let p = NSBezierPath()
-    for k in 0..<8 {
-        let a = (22.5 + 45 * Double(k)) * Double.pi / 180
+    for k in 0..<6 {
+        let a = Double(k) * 60 * Double.pi / 180
         let pt = NSPoint(x: cx + R * CGFloat(cos(a)), y: cy + R * CGFloat(sin(a)))
         if k == 0 { p.move(to: pt) } else { p.line(to: pt) }
     }
@@ -821,18 +823,20 @@ private func drawMenuGlyph(_ style: String, util: Double?, color: NSColor) {
     let hasReading = util != nil
     let u = CGFloat(max(0, min(1, util ?? 0)))
     switch style {
-    case "octagon":
-        // Liquid level rising from the bottom of an octagon (EVA instrument frame).
-        let oct = octagonPath(9, 9, 7.8)
+    case "hexagon":
+        // Liquid level rising from the bottom of a hexagon (EVA instrument cell).
+        let R: CGFloat = 8.3
+        let halfH = R * 0.8660254  // flat-top hexagon's vertical half-extent
+        let hex = hexagonPath(9, 9, R)
         if hasReading {
             NSGraphicsContext.saveGraphicsState()
-            oct.addClip()
+            hex.addClip()
             color.setFill()
-            NSRect(x: 0, y: 9 - 7.8, width: 18, height: 15.6 * u).fill()
+            NSRect(x: 0, y: 9 - halfH, width: 18, height: 2 * halfH * u).fill()
             NSGraphicsContext.restoreGraphicsState()
         }
-        oct.lineWidth = 1.2
-        color.setStroke(); oct.stroke()
+        hex.lineWidth = 1.2
+        color.setStroke(); hex.stroke()
     case "hazard":
         // Rounded bar whose fill (grows with usage) is EVA hazard diagonal hatch.
         let body = NSRect(x: 1.5, y: 5, width: 15, height: 8)
@@ -890,7 +894,7 @@ private func drawMenuGlyph(_ style: String, util: Double?, color: NSColor) {
 
 // template=true -> black glyph, system re-tints for light/dark menu bar.
 // template=false + tint -> a fixed color, for previews inside the settings window.
-func makeMenuIcon(style: String = "octagon", util: Double? = nil,
+func makeMenuIcon(style: String = "hexagon", util: Double? = nil,
                   template: Bool = true, tint: NSColor = .black) -> NSImage {
     let img = NSImage(size: NSSize(width: 18, height: 18))
     img.lockFocus()
