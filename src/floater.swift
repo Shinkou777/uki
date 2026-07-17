@@ -792,16 +792,43 @@ func currentIconStyle() -> String {
     return menuIconStyles.contains { $0.id == s } ? s : "hexagon"
 }
 
-// Regular flat-top hexagon centered at (cx,cy), circumradius R (horizontal top
-// and bottom edges -> clean liquid fill line; pointy left/right).
-private func hexagonPath(_ cx: CGFloat, _ cy: CGFloat, _ R: CGFloat) -> NSBezierPath {
-    let p = NSBezierPath()
-    for k in 0..<6 {
-        let a = Double(k) * 60 * Double.pi / 180
-        let pt = NSPoint(x: cx + R * CGFloat(cos(a)), y: cy + R * CGFloat(sin(a)))
-        if k == 0 { p.move(to: pt) } else { p.line(to: pt) }
+// Pointy-top hexagon (vertex up), vertices clockwise starting from the top.
+private func hexVertices(_ cx: CGFloat, _ cy: CGFloat, _ R: CGFloat) -> [NSPoint] {
+    (0..<6).map { k in
+        let a = (90 - Double(k) * 60) * Double.pi / 180
+        return NSPoint(x: cx + R * CGFloat(cos(a)), y: cy + R * CGFloat(sin(a)))
     }
+}
+
+private func hexClosedPath(_ v: [NSPoint]) -> NSBezierPath {
+    let p = NSBezierPath()
+    p.move(to: v[0])
+    for i in 1..<v.count { p.line(to: v[i]) }
     p.close()
+    return p
+}
+
+// Outline tracing the hexagon perimeter clockwise from the top vertex, covering
+// `frac` (0..1) of the total perimeter — a hollow hexagonal ring gauge.
+private func hexTracePath(_ v: [NSPoint], _ frac: CGFloat) -> NSBezierPath {
+    let p = NSBezierPath()
+    if frac <= 0 { return p }
+    var total: CGFloat = 0
+    for i in 0..<6 { let a = v[i], b = v[(i + 1) % 6]; total += hypot(b.x - a.x, b.y - a.y) }
+    let target = frac * total
+    var acc: CGFloat = 0
+    p.move(to: v[0])
+    for i in 0..<6 {
+        let a = v[i], b = v[(i + 1) % 6]
+        let seg = hypot(b.x - a.x, b.y - a.y)
+        if acc + seg <= target {
+            p.line(to: b); acc += seg
+        } else {
+            let t = (target - acc) / seg
+            p.line(to: NSPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t))
+            break
+        }
+    }
     return p
 }
 
@@ -824,19 +851,21 @@ private func drawMenuGlyph(_ style: String, util: Double?, color: NSColor) {
     let u = CGFloat(max(0, min(1, util ?? 0)))
     switch style {
     case "hexagon":
-        // Liquid level rising from the bottom of a hexagon (EVA instrument cell).
-        let R: CGFloat = 8.3
-        let halfH = R * 0.8660254  // flat-top hexagon's vertical half-extent
-        let hex = hexagonPath(9, 9, R)
-        if hasReading {
-            NSGraphicsContext.saveGraphicsState()
-            hex.addClip()
-            color.setFill()
-            NSRect(x: 0, y: 9 - halfH, width: 18, height: 2 * halfH * u).fill()
-            NSGraphicsContext.restoreGraphicsState()
+        // Hollow pointy-top hexagon; its outline traces clockwise from the top,
+        // covering the current usage % — a hexagonal ring gauge (center stays empty).
+        let v = hexVertices(9, 9, 7.6)
+        let lw: CGFloat = 2.0
+        let track = hexClosedPath(v)
+        track.lineWidth = lw
+        track.lineJoinStyle = .round
+        color.withAlphaComponent(0.25).setStroke(); track.stroke()
+        if hasReading && u > 0 {
+            let tr = hexTracePath(v, u)
+            tr.lineWidth = lw
+            tr.lineJoinStyle = .round
+            tr.lineCapStyle = .round
+            color.setStroke(); tr.stroke()
         }
-        hex.lineWidth = 1.2
-        color.setStroke(); hex.stroke()
     case "hazard":
         // Rounded bar whose fill (grows with usage) is EVA hazard diagonal hatch.
         let body = NSRect(x: 1.5, y: 5, width: 15, height: 8)
