@@ -832,18 +832,15 @@ private func hexTracePath(_ v: [NSPoint], _ frac: CGFloat) -> NSBezierPath {
     return p
 }
 
-// Track the window the API flags as representative (`primary_claim`) — usually
-// the 5h, the one that actually climbs as you work. The old max(5h,7d) pinned the
-// icon to the slow-moving 7d, so it looked frozen ("just an ornament"). nil when
-// there's no usable reading (error / network-wait) -> icon shows an idle look.
+// The menu bar gauge always reads the 5h window, matching the MIN floater view.
+// Earlier versions followed the API's `primary_claim`, which switches to 7d
+// whenever the weekly window is the tighter one — the reading then silently
+// changed basis (5h at 0% but the icon drawing 76%). Fixed basis, always 5h;
+// the 7d and overage rows stay in the MAX view. nil when there's no usable
+// reading (error / network-wait) -> icon shows an idle look.
 func representativeUtil(_ s: UsageState?) -> Double? {
     guard let s, s.network_wait != true, s.error == nil else { return nil }
-    switch s.primary_claim {
-    case "seven_day": return s.seven_day.utilization ?? s.five_hour.utilization
-    case "five_hour": return s.five_hour.utilization ?? s.seven_day.utilization
-    default:
-        return [s.five_hour.utilization, s.seven_day.utilization].compactMap { $0 }.max()
-    }
+    return s.five_hour.utilization
 }
 
 private func drawMenuGlyph(_ style: String, util: Double?, color: NSColor) {
