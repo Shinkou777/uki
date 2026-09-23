@@ -19,3 +19,7 @@ config.json
 
 # tmp
 /tmp/AppIcon.iconset/
+
+# Local notes for coding agents (not published)
+CLAUDE.md
+AGENTS.md
