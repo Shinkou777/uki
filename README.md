@@ -1,6 +1,10 @@
-# Claude Floater
+# 浮子 UKI
 
-EVA NERV-styled macOS desktop HUD that shows your current Anthropic API rate-limit usage in real time. Auto-starts at login, gets out of the way when you don't need it.
+浮子は macOS 常駐の Claude 使用量モニターです。
+
+浮子是 macOS 常驻的 Claude 用量浮窗。
+
+Uki (浮子) is an EVA NERV-styled macOS desktop HUD that shows your current Claude API rate-limit usage in real time. It starts at login and gets out of the way when you don't need it.
 
 ![max view](docs/screenshots/max.png)
 ![min view](docs/screenshots/min.png)
@@ -24,19 +28,21 @@ A Python daemon polls Anthropic's API headers and writes state to a local file; 
 ## Install
 
 ```bash
-git clone https://github.com/<YOU>/claude-floater.git
-cd claude-floater
+git clone https://github.com/Shinkou777/uki.git
+cd uki
 bash scripts/install.sh
 ```
 
 The installer will:
 
-1. Stage `monitor.py` to `~/.claude-usage-monitor/bin/`
-2. Build `ClaudeFloater.app` into `/Applications/`
-3. Create `~/.claude-usage-monitor/.env` for your API key
+1. Stage `monitor.py` to `~/.uki/bin/`
+2. Build `Uki.app` into `/Applications/`
+3. Create `~/.uki/.env` for your API key
 4. Register two LaunchAgents so both pieces auto-start at login
 
-After install, edit `~/.claude-usage-monitor/.env` and put your key in:
+Upgrading an earlier install: run `bash scripts/uninstall.sh` first, then `bash scripts/install.sh`. The installer moves your existing settings and state into `~/.uki`.
+
+After install, edit `~/.uki/.env` and put your key in:
 
 ```
 ANTHROPIC_API_KEY=sk-ant-...
@@ -45,24 +51,24 @@ ANTHROPIC_API_KEY=sk-ant-...
 Then restart the monitor:
 
 ```bash
-launchctl kickstart -k "gui/$UID/dev.eva.claude-monitor"
+launchctl kickstart -k "gui/$UID/app.shinkolab.uki-monitor"
 ```
 
-The floater will pick up the new state within 15 seconds.
+Uki will pick up the new state within 15 seconds.
 
 ## Uninstall
 
 ```bash
 bash scripts/uninstall.sh           # removes app + LaunchAgents, keeps state/.env
-bash scripts/uninstall.sh --purge   # also removes ~/.claude-usage-monitor
+bash scripts/uninstall.sh --purge   # also removes ~/.uki
 ```
 
 ## First-launch security warning
 
 This binary is unsigned. macOS Gatekeeper will block it on first open. To bypass:
 
-1. Right-click `ClaudeFloater.app` in Finder → **Open** → confirm
-2. Or: `xattr -d com.apple.quarantine /Applications/ClaudeFloater.app`
+1. Right-click `Uki.app` in Finder → **Open** → confirm
+2. Or: `xattr -d com.apple.quarantine /Applications/Uki.app`
 
 A signed + notarized release is on the roadmap (requires $99/yr Apple Developer Program).
 
@@ -72,22 +78,22 @@ A signed + notarized release is on the roadmap (requires $99/yr Apple Developer 
 Anthropic API
      │  (rate-limit headers)
      ▼
-~/.claude-usage-monitor/bin/monitor.py
+~/.uki/bin/monitor.py
      │  (writes JSON every 3-30 min, adaptive)
      ▼
-~/.claude-usage-monitor/state.json
+~/.uki/state.json
      │  (read every 15s)
      ▼
-/Applications/ClaudeFloater.app   ← SwiftUI, this repo's floater.swift
+/Applications/Uki.app   ← SwiftUI, this repo's src/uki.swift
 ```
 
-The monitor adapts polling cadence based on system state: 3 min on AC, 5 min on battery, 30 min when idle (>10 min) or low battery (<30%). On wake from sleep, the floater sends `SIGUSR1` to force an immediate refresh.
+The monitor adapts polling cadence based on system state: 3 min on AC, 5 min on battery, 30 min when idle (>10 min) or low battery (<30%). On wake from sleep, the app sends `SIGUSR1` to force an immediate refresh.
 
 ## Customizing
 
-- **Position**: drag the floater anywhere; it remembers per-launch
+- **Position**: drag the panel anywhere; it remembers per-launch
 - **Size**: click the `▼` to toggle between MAX (290×178) and MIN (116×28)
-- **Colors / fonts**: edit `src/floater.swift`, search for `enum Eva` (palette) or `func mincho` (fonts)
+- **Colors / fonts**: edit `src/uki.swift`, search for `enum Eva` (palette) or `func mincho` (fonts)
 - **Icon**: edit `src/make-icon.swift` and rebuild — the squircle, central glyph, and corner accent are all parametric
 
 ## Roadmap

@@ -1,5 +1,5 @@
 # Build artifacts
-src/floater
+src/uki
 build/
 *.app/
 *.icns

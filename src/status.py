@@ -6,7 +6,7 @@ import sys
 import time
 from pathlib import Path
 
-STATE = Path.home() / ".claude-usage-monitor" / "state.json"
+STATE = Path.home() / ".uki" / "state.json"
 
 
 def fmt_remaining(reset_at):

@@ -2,7 +2,7 @@
 """Claude usage monitor daemon.
 
 Polls Anthropic API rate-limit response headers and writes the current
-5h / 7d / overage window state to ~/.claude-usage-monitor/state.json.
+5h / 7d / overage window state to ~/.uki/state.json.
 
 Adaptive polling:
   - active on AC      -> every 90 sec
@@ -29,7 +29,7 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
-ROOT = Path.home() / ".claude-usage-monitor"
+ROOT = Path.home() / ".uki"
 STATE = ROOT / "state.json"
 LOG = ROOT / "monitor.log"
 
@@ -354,7 +354,7 @@ def write_state(state: dict) -> None:
     tmp.replace(STATE)
 
 
-# Set by SIGUSR1 (sent by the floater on system wake) to break out of sleep early.
+# Set by SIGUSR1 (sent by the Uki app on system wake) to break out of sleep early.
 _wake = threading.Event()
 
 def _on_sigusr1(signum, frame):
@@ -365,7 +365,7 @@ signal.signal(signal.SIGUSR1, _on_sigusr1)
 
 def sleep_until_next(interval: int, watch_activity: bool) -> str:
     """Sleep up to `interval` seconds. Returns why we woke:
-      "wake"    - SIGUSR1 (system wake / forced refresh from the floater)
+      "wake"    - SIGUSR1 (system wake / forced refresh from the app)
       "active"  - user became active again during a long idle sleep
       "timeout" - the full interval elapsed
 
@@ -448,8 +448,8 @@ def _notify_auth_expired() -> None:
     try:
         subprocess.run([
             "osascript", "-e",
-            'display notification "認証の有効期限が切れました。フローターの「再認証」ボタンを押してください。" '
-            'with title "ClaudeFloater" subtitle "認証失敗"'
+            'display notification "認証の有効期限が切れました。浮子の「再認証」ボタンを押してください。" '
+            'with title "浮子" subtitle "認証失敗"'
         ], capture_output=True, timeout=5)
     except Exception:
         pass

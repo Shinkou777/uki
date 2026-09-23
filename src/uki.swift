@@ -23,21 +23,21 @@ struct UsageState: Decodable {
     let network_wait: Bool?
 }
 
-struct FloaterConfig: Codable {
+struct UkiConfig: Codable {
     var api_source: String
     var api_key: String?
 
-    static let path = ("~/.claude-usage-monitor/config.json" as NSString).expandingTildeInPath
+    static let path = ("~/.uki/config.json" as NSString).expandingTildeInPath
 
-    static func load() -> FloaterConfig? {
+    static func load() -> UkiConfig? {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-              let c = try? JSONDecoder().decode(FloaterConfig.self, from: data) else { return nil }
+              let c = try? JSONDecoder().decode(UkiConfig.self, from: data) else { return nil }
         return c
     }
 
     func save() throws {
         let data = try JSONEncoder().encode(self)
-        try data.write(to: URL(fileURLWithPath: FloaterConfig.path))
+        try data.write(to: URL(fileURLWithPath: UkiConfig.path))
     }
 }
 
@@ -47,7 +47,7 @@ final class StateLoader: ObservableObject {
     @Published var now: Date = Date()
     private var fileTimer: Timer?
     private var clockTimer: Timer?
-    private let path = ("~/.claude-usage-monitor/state.json" as NSString).expandingTildeInPath
+    private let path = ("~/.uki/state.json" as NSString).expandingTildeInPath
 
     init() {
         load()
@@ -777,7 +777,7 @@ let kMenuIconStyleKey = "menuIconStyle"
 
 // User-selectable menu-bar icon styles. The live ones (octagon/hazard/ring)
 // redraw with the current usage %, so the menu bar itself is a gauge. octagon &
-// hazard echo the floater's EVA/NERV octagon frame + hazard stripes.
+// hazard echo the panel's EVA/NERV octagon frame + hazard stripes.
 let menuIconStyles: [(id: String, label: String)] = [
     ("hexagon", "六角ゲージ"),
     ("hazard", "ハザードバー"),
@@ -832,7 +832,7 @@ private func hexTracePath(_ v: [NSPoint], _ frac: CGFloat) -> NSBezierPath {
     return p
 }
 
-// The menu bar gauge always reads the 5h window, matching the MIN floater view.
+// The menu bar gauge always reads the 5h window, matching the MIN panel view.
 // Earlier versions followed the API's `primary_claim`, which switches to 7d
 // whenever the weekly window is the tighter one — the reading then silently
 // changed basis (5h at 0% but the icon drawing 76%). Fixed basis, always 5h;
@@ -1013,7 +1013,7 @@ final class PanelInputView: NSView {
         didDrag = false
     }
 
-    // Right-click anywhere on the floater -> context menu (最小化/展開 など).
+    // Right-click anywhere on the panel -> context menu (最小化/展開 など).
     // The nonactivating panel doesn't route to the AppDelegate via the responder
     // chain, so the menu items carry explicit targets (set in buildContextMenu).
     override func rightMouseDown(with event: NSEvent) {
@@ -1040,7 +1040,7 @@ final class PanelInputView: NSView {
         let inRefresh = refreshHotZones.contains(where: { $0.contains(loc) })
         let inUsage = usageHotZones.contains(where: { $0.contains(loc) })
         let inReLogin = reLoginHotZones.contains(where: { $0.contains(loc) })
-        NSLog("[floater] mouseUp loc=(%.1f,%.1f) dragged=%d mini=%d inHot=%d inRefresh=%d inUsage=%d inReLogin=%d",
+        NSLog("[uki] mouseUp loc=(%.1f,%.1f) dragged=%d mini=%d inHot=%d inRefresh=%d inUsage=%d inReLogin=%d",
               loc.x, loc.y, dragged, mini, inHot, inRefresh, inUsage, inReLogin)
         defer {
             initialMouse = nil
@@ -1281,13 +1281,13 @@ struct SettingsView: View {
     }
 
     private func loadConfig() {
-        guard let c = FloaterConfig.load() else { return }
+        guard let c = UkiConfig.load() else { return }
         apiSource = c.api_source
         apiKey = c.api_key ?? ""
     }
 
     private func save() {
-        var c = FloaterConfig(api_source: apiSource)
+        var c = UkiConfig(api_source: apiSource)
         if apiSource != "claude_oauth" { c.api_key = apiKey }
         do {
             try c.save()
@@ -1461,7 +1461,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         monitor.start(queue: DispatchQueue(label: "net-watch"))
         self.pathMonitor = monitor
 
-        if FloaterConfig.load() == nil {
+        if UkiConfig.load() == nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
                 self?.showSettings()
             }
@@ -1479,7 +1479,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "今すぐ更新",   action: #selector(forceRefresh),     keyEquivalent: "r"))
         menu.addItem(NSMenuItem(title: "形態切替",     action: #selector(toggleForm),       keyEquivalent: "m"))
         menu.addItem(NSMenuItem(title: "位置リセット", action: #selector(resetPosition),    keyEquivalent: ""))
-        let toggleItem = NSMenuItem(title: "フローターを隠す", action: #selector(toggleVisibility), keyEquivalent: "h")
+        let toggleItem = NSMenuItem(title: "浮子を隠す", action: #selector(toggleVisibility), keyEquivalent: "h")
         self.toggleVisibilityItem = toggleItem
         menu.addItem(toggleItem)
         menu.addItem(NSMenuItem(title: "使用状況 (claude.ai)", action: #selector(openUsagePage), keyEquivalent: "u"))
@@ -1498,11 +1498,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.startRefreshAnimation()
         let task = Process()
         task.launchPath = "/usr/bin/pkill"
-        let monitorPath = ("~/.claude-usage-monitor/bin/monitor.py" as NSString).expandingTildeInPath
+        let monitorPath = ("~/.uki/bin/monitor.py" as NSString).expandingTildeInPath
         task.arguments = ["-USR1", "-f", monitorPath]
         try? task.run()
         var pollCount = 0
-        let statePath = ("~/.claude-usage-monitor/state.json" as NSString).expandingTildeInPath
+        let statePath = ("~/.uki/state.json" as NSString).expandingTildeInPath
         refreshPollTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] timer in
             guard let self else { timer.invalidate(); return }
             self.loader.load()
@@ -1546,7 +1546,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             var err: NSDictionary?
             osa.executeAndReturnError(&err)
             if let err = err {
-                NSLog("[floater] reLogin osascript error: %@", err)
+                NSLog("[uki] reLogin osascript error: %@", err)
                 // Fallback: at least surface the login page so the user isn't stuck.
                 NSWorkspace.shared.open(URL(string: "https://claude.ai/login")!)
             }
@@ -1579,7 +1579,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(item("位置リセット", #selector(resetPosition)))
         menu.addItem(item("使用状況 (claude.ai)", #selector(openUsagePage)))
-        menu.addItem(item("フローターを隠す", #selector(toggleVisibility)))
+        menu.addItem(item("浮子を隠す", #selector(toggleVisibility)))
         menu.addItem(item("設定", #selector(showSettings)))
         menu.addItem(.separator())
         menu.addItem(item("終了", #selector(NSApplication.terminate(_:))))
@@ -1613,7 +1613,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
-        w.title = "ClaudeFloater 設定"
+        w.title = "浮子 設定"
         w.contentView = hosting
         w.center()
         w.level = .floating
@@ -1622,7 +1622,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func restartMonitor() {
-        let monitorPath = ("~/.claude-usage-monitor/bin/monitor.py" as NSString).expandingTildeInPath
+        let monitorPath = ("~/.uki/bin/monitor.py" as NSString).expandingTildeInPath
         let kill = Process()
         kill.launchPath = "/usr/bin/pkill"
         kill.arguments = ["-f", monitorPath]
@@ -1644,7 +1644,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 extension AppDelegate: NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
-        toggleVisibilityItem?.title = panel.isVisible ? "フローターを隠す" : "フローターを表示"
+        toggleVisibilityItem?.title = panel.isVisible ? "浮子を隠す" : "浮子を表示"
     }
 }
 

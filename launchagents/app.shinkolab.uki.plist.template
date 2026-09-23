@@ -3,19 +3,18 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>dev.eva.claude-monitor</string>
+    <string>app.shinkolab.uki</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/bin/python3</string>
-        <string>__HOME__/.claude-usage-monitor/bin/monitor.py</string>
+        <string>/Applications/Uki.app/Contents/MacOS/Uki</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
-    <true/>
+    <false/>
     <key>StandardOutPath</key>
-    <string>__HOME__/.claude-usage-monitor/monitor.stdout.log</string>
+    <string>__HOME__/.uki/uki.stdout.log</string>
     <key>StandardErrorPath</key>
-    <string>__HOME__/.claude-usage-monitor/monitor.stderr.log</string>
+    <string>__HOME__/.uki/uki.stderr.log</string>
 </dict>
 </plist>
