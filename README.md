@@ -104,6 +104,16 @@ The monitor adapts polling cadence based on system state: 3 min on AC, 5 min on 
 - [ ] Optional menu-bar-only mode (no floating panel)
 - [ ] Light/dark scheme detection (currently dark-only)
 
+## More from ShinkoLab
+
+UKI is made by [ShinkoLab](https://shinkolab.app), the lab of Isen, who works in AI education, technical training and consulting in Japan and China. Notes and making-of posts: [note (Japanese)](https://note.com/heishinkou) · [Xiaohongshu @先進元素](https://www.xiaohongshu.com/user/profile/5e493a3900000000010079b6).
+
+| Tool | What it does |
+|---|---|
+| [幻燈 GENTO](https://github.com/Shinkou777/gento) | Claude Code skill: a brief in, a code-drawn animated short film with its own soundtrack out |
+| [文房 BUNBO](https://github.com/Shinkou777/bunbo-skill) | Claude Code skill: source material in, a Xiaohongshu long post plus Japanese and English Instagram cards out |
+| [影幕 KAGEMAKU](https://github.com/Shinkou777/kagemaku) | Frosted-glass bar for macOS that hides subtitles until you want to peek |
+
 ## Trademarks & Credits
 
 > This project is fan art inspired by *Neon Genesis Evangelion* (© khara, Inc.).
