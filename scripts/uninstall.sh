@@ -10,13 +10,13 @@ set -e
 
 LA_DIR="$HOME/Library/LaunchAgents"
 RUNTIME_DIR="$HOME/.uki"
-LABELS="com.shinkotera.uki-monitor com.shinkotera.uki"
+LABELS="com.shinkouniv.uki-monitor com.shinkouniv.uki"
 
 # Cleanup targets from before the rename. The first local setup used labels
 # built from the account name (com.<user>.claude-*); the repo's earlier
-# installer used dev.eva.claude-*; until 2026-10 the labels were app.shinkolab.uki*.
+# installer used dev.eva.claude-*; until 2026-10 the labels were app.shinkolab.uki*, then briefly com.shinkotera.uki*.
 OLD_USER_PREFIX="com.$(id -un)"
-OLD_LABELS="$OLD_USER_PREFIX.claude-monitor $OLD_USER_PREFIX.claude-floater dev.eva.claude-monitor dev.eva.claude-floater app.shinkolab.uki-monitor app.shinkolab.uki"
+OLD_LABELS="$OLD_USER_PREFIX.claude-monitor $OLD_USER_PREFIX.claude-floater dev.eva.claude-monitor dev.eva.claude-floater app.shinkolab.uki-monitor app.shinkolab.uki com.shinkotera.uki-monitor com.shinkotera.uki"
 OLD_RUNTIME_DIR="$HOME/.claude-usage-monitor"
 OLD_APP_DIR="/Applications/ClaudeFloater.app"
 

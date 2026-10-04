@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.shinkotera.uki-monitor</string>
+    <string>com.shinkouniv.uki-monitor</string>
     <key>ProgramArguments</key>
     <array>
         <string>/usr/bin/python3</string>

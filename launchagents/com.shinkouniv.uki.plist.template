@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.shinkotera.uki</string>
+    <string>com.shinkouniv.uki</string>
     <key>ProgramArguments</key>
     <array>
         <string>/Applications/Uki.app/Contents/MacOS/Uki</string>
