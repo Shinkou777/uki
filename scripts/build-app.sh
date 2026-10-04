@@ -13,7 +13,7 @@ case "$APP_DIR" in
   *) echo "UKI_APP_DIR must end in .app (got: $APP_DIR)" >&2; exit 1 ;;
 esac
 BIN="$APP_DIR/Contents/MacOS/$APP_NAME"
-BUNDLE_ID="${UKI_BUNDLE_ID:-app.shinkolab.uki}"
+BUNDLE_ID="${UKI_BUNDLE_ID:-com.shinkotera.uki}"
 # Version resolution: explicit env > CI tag (GITHUB_REF_NAME on tag push) > fallback
 VERSION="${UKI_VERSION:-${GITHUB_REF_NAME:-0.1.1}}"
 VERSION="${VERSION#v}"  # strip leading v if any

@@ -51,7 +51,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 Then restart the monitor:
 
 ```bash
-launchctl kickstart -k "gui/$UID/app.shinkolab.uki-monitor"
+launchctl kickstart -k "gui/$UID/com.shinkotera.uki-monitor"
 ```
 
 Uki will pick up the new state within 15 seconds.
@@ -104,9 +104,9 @@ The monitor adapts polling cadence based on system state: 3 min on AC, 5 min on 
 - [ ] Optional menu-bar-only mode (no floating panel)
 - [ ] Light/dark scheme detection (currently dark-only)
 
-## More from ShinkoLab
+## More from ShinkoTera
 
-UKI is made by [ShinkoLab](https://shinkolab.app), the lab of Isen, who works in AI education, technical training and consulting in Japan and China. Notes and making-of posts: [note (Japanese)](https://note.com/heishinkou) · [Xiaohongshu @先進元素](https://www.xiaohongshu.com/user/profile/5e493a3900000000010079b6).
+UKI is made by [ShinkoTera](https://shinkotera.com), the lab of Isen, who works in AI education, technical training and consulting in Japan and China. Notes and making-of posts: [note (Japanese)](https://note.com/heishinkou) · [Xiaohongshu @先進元素](https://www.xiaohongshu.com/user/profile/5e493a3900000000010079b6).
 
 | Tool | What it does |
 |---|---|

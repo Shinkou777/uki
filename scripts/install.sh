@@ -8,8 +8,8 @@ set -e
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 RUNTIME_DIR="$HOME/.uki"
 LA_DIR="$HOME/Library/LaunchAgents"
-APP_LABEL="app.shinkolab.uki"
-MONITOR_LABEL="app.shinkolab.uki-monitor"
+APP_LABEL="com.shinkotera.uki"
+MONITOR_LABEL="com.shinkotera.uki-monitor"
 
 # One-time move of the runtime folder used before the rename, so config.json
 # and state.json carry over. Runs only while ~/.uki does not exist yet.
@@ -52,6 +52,12 @@ for tmpl in "$REPO"/launchagents/*.plist.template; do
 done
 
 echo "[install] registering with launchd ..."
+# Labels used until 2026-10 (before the ShinkoTera rename): stop them and drop their plists
+# so an upgrade does not leave a second monitor and app running.
+for old in app.shinkolab.uki-monitor app.shinkolab.uki; do
+  launchctl bootout "gui/$UID/$old" 2>/dev/null || true
+  rm -f "$LA_DIR/$old.plist"
+done
 launchctl bootout "gui/$UID/$MONITOR_LABEL" 2>/dev/null || true
 launchctl bootout "gui/$UID/$APP_LABEL" 2>/dev/null || true
 launchctl bootstrap "gui/$UID" "$LA_DIR/$MONITOR_LABEL.plist"
