@@ -54,6 +54,10 @@ done
 echo "[install] registering with launchd ..."
 # Labels used until 2026-10 (before the ShinkoTera rename): stop them and drop their plists
 # so an upgrade does not leave a second monitor and app running.
+# Carry the menu bar settings (icon style, position) over to the new bundle id.
+if defaults read app.shinkolab.uki >/dev/null 2>&1 && ! defaults read "$APP_LABEL" >/dev/null 2>&1; then
+  defaults export app.shinkolab.uki - | defaults import "$APP_LABEL" -
+fi
 for old in app.shinkolab.uki-monitor app.shinkolab.uki; do
   launchctl bootout "gui/$UID/$old" 2>/dev/null || true
   rm -f "$LA_DIR/$old.plist"
