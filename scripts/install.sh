@@ -66,6 +66,8 @@ for old in app.shinkolab.uki-monitor app.shinkolab.uki com.shinkotera.uki-monito
 done
 launchctl bootout "gui/$UID/$MONITOR_LABEL" 2>/dev/null || true
 launchctl bootout "gui/$UID/$APP_LABEL" 2>/dev/null || true
+# bootout 是异步的，紧接着 bootstrap 会报 5: Input/output error
+sleep 1
 launchctl bootstrap "gui/$UID" "$LA_DIR/$MONITOR_LABEL.plist"
 launchctl bootstrap "gui/$UID" "$LA_DIR/$APP_LABEL.plist"
 launchctl kickstart -k "gui/$UID/$MONITOR_LABEL"

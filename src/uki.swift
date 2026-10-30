@@ -1582,7 +1582,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(item("浮子を隠す", #selector(toggleVisibility)))
         menu.addItem(item("設定", #selector(showSettings)))
         menu.addItem(.separator())
-        menu.addItem(item("終了", #selector(NSApplication.terminate(_:))))
+        // 終了 は NSApp が処理する。target を self (AppDelegate) にすると応答できず、自動でグレーアウトされる
+        let quit = NSMenuItem(title: "終了", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
+        quit.target = NSApp
+        menu.addItem(quit)
         return menu
     }
     @objc func openUsagePage() {
