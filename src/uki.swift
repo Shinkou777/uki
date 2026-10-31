@@ -149,8 +149,18 @@ func fmtRemaining(_ resetAt: Int?, now: Date) -> String {
     let secs = max(0, r - Int(now.timeIntervalSince1970))
     let h = secs / 3600
     let m = (secs % 3600) / 60
+    if h >= 24 { return String(format: "%dD %02dH", h / 24, h % 24) }
     if h > 0 { return String(format: "%dH %02dM", h, m) }
     return String(format: "%dM", m)
+}
+
+// MAX panel height follows the rows: each MetricRow takes 38pt (30 + 8 spacing),
+// and three rows filled the original 178pt. The error banner keeps 178 because
+// its layout and the re-login hot zone are set for that height; every other
+// state fits at least two rows so a network wait after wake doesn't resize it.
+func maxPanelHeight(_ s: UsageState?) -> CGFloat {
+    if let s, s.error != nil, s.network_wait != true { return 178 }
+    return CGFloat(64 + 38 * max(2, s?.limits?.count ?? 0))
 }
 
 func fmtClock(_ resetAt: Int?, now: Date) -> String {
@@ -527,7 +537,6 @@ struct MaxBackground: ViewModifier {
 }
 
 struct MaxOverlay: ViewModifier {
-    @ObservedObject var model: AppModel
     func body(content: Content) -> some View {
         content
             .overlay(
@@ -551,28 +560,6 @@ struct MaxOverlay: ViewModifier {
             .clipShape(EvaPanel(cut: 14))
             .overlay(EvaPanel(cut: 14).stroke(Color.white.opacity(0.5), lineWidth: 1))
             .overlay(HazardCorner(size: 14, rotated: true), alignment: .bottomTrailing)
-            .overlay(UsageHintOverlay(model: model), alignment: .topLeading)
-    }
-}
-
-struct UsageHintOverlay: View {
-    @ObservedObject var model: AppModel
-    var body: some View {
-        Group {
-            if model.showUsageHint {
-                Text("▸ 公式で使用量を確認")
-                    .font(mincho(9))
-                    .foregroundStyle(Eva.amber)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Color.black.opacity(0.88))
-                    .clipShape(EvaPanel(cut: 4))
-                    .overlay(EvaPanel(cut: 4).stroke(Eva.amber.opacity(0.4), lineWidth: 1))
-                    .transition(.opacity)
-            }
-        }
-        .animation(.easeInOut(duration: 0.15), value: model.showUsageHint)
-        .padding(.top, 44).padding(.leading, 32)
     }
 }
 
@@ -650,13 +637,33 @@ struct MaxView: View {
         .frame(width: 14, height: 14)
     }
 
-    private var titleRow: some View {
-        HStack(spacing: 8) {
+    // Hovering the title (click opens claude.ai usage) swaps the title for the
+    // hint in place, so the hint never covers the rows below.
+    private var titleText: some View {
+        ZStack(alignment: .leading) {
             Text("クロード稼働率")
                 .font(.custom("HiraMinProN-W6", size: 15).weight(.black))
                 .foregroundStyle(.white)
                 .tracking(2)
                 .fixedSize()
+                .opacity(model.showUsageHint ? 0 : 1)
+            Text("公式で使用量を確認")
+                .font(mincho(11))
+                .foregroundStyle(Eva.amber)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Color.black.opacity(0.88))
+                .clipShape(EvaPanel(cut: 4))
+                .overlay(EvaPanel(cut: 4).stroke(Eva.amber.opacity(0.4), lineWidth: 1))
+                .fixedSize()
+                .opacity(model.showUsageHint ? 1 : 0)
+        }
+        .animation(.easeInOut(duration: 0.15), value: model.showUsageHint)
+    }
+
+    private var titleRow: some View {
+        HStack(spacing: 8) {
+            titleText
             Spacer(minLength: 6)
             statusIndicator
             refreshButton
@@ -699,9 +706,9 @@ struct MaxView: View {
             contentArea
         }
         .padding(EdgeInsets(top: 10, leading: 32, bottom: 4, trailing: 18))
-        .frame(width: 290, height: 178)
+        .frame(width: 290, height: maxPanelHeight(loader.state))
         .modifier(MaxBackground())
-        .modifier(MaxOverlay(model: model))
+        .modifier(MaxOverlay())
     }
 }
 
@@ -1313,7 +1320,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var pathMonitor: NWPathMonitor?
     var toggleVisibilityItem: NSMenuItem?
 
-    let maxSize = NSSize(width: 290, height: 178)
+    var maxSize: NSSize { NSSize(width: 290, height: maxPanelHeight(loader.state)) }
     let minSize = NSSize(width: 116, height: 28)
 
     // Hot zones for "minimize" while in MAX form: top-right ▢ + bottom-right red corner.
@@ -1443,7 +1450,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // refresh) so the live styles track the current usage %.
         iconCancellable = loader.$state
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.updateMenuBarIcon() }
+            .sink { [weak self] _ in
+                self?.updateMenuBarIcon()
+                // One runloop later, after SwiftUI has laid out the new height.
+                DispatchQueue.main.async { self?.fitMaxPanel() }
+            }
 
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
@@ -1589,6 +1600,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(quit)
         return menu
     }
+    // Fit the MAX panel to the current rows, keeping its top edge in place.
+    func fitMaxPanel() {
+        guard !model.minimized, let panel else { return }
+        let target = maxSize
+        let cur = panel.frame
+        guard abs(cur.height - target.height) > 0.5 else { return }
+        panel.setFrame(NSRect(x: cur.minX, y: cur.maxY - target.height,
+                              width: target.width, height: target.height),
+                       display: true, animate: false)
+        inputView.toggleHotZones = AppDelegate.maxHotZones(for: target)
+        inputView.refreshHotZones = AppDelegate.maxRefreshHotZones(for: target)
+        inputView.usageHotZones = AppDelegate.maxUsageHotZones(for: target)
+        inputView.reLoginHotZones = AppDelegate.maxReLoginHotZones(for: target)
+    }
+
     @objc func openUsagePage() {
         NSWorkspace.shared.open(URL(string: "https://claude.ai/settings/usage")!)
     }

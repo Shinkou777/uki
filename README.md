@@ -96,7 +96,7 @@ The monitor adapts polling cadence based on system state: 3 min on AC, 5 min on 
 ## Customizing
 
 - **Position**: drag the panel anywhere; it remembers per-launch
-- **Size**: click the `▼` to toggle between MAX (290×178) and MIN (116×28)
+- **Size**: click the `▼` to toggle between MAX (290 wide, as tall as its rows) and MIN (116×28)
 - **Colors / fonts**: edit `src/uki.swift`, search for `enum Eva` (palette) or `func mincho` (fonts)
 - **Icon**: edit `src/make-icon.swift` and rebuild — the squircle, central glyph, and corner accent are all parametric
 
