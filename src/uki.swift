@@ -5,22 +5,25 @@ import SwiftUI
 
 // MARK: - Data
 
-struct UsageWindow: Decodable {
+// One row of Claude's /usage: the weekly limit for all models ("weekly"), or a
+// per-model weekly limit such as Fable. monitor.py writes the label.
+struct UsageLimit: Decodable {
+    let id: String
+    let label: String
     let utilization: Double?
     let reset_at: Int?
-    let status: String?
 }
 
 struct UsageState: Decodable {
     let fetched_at: Int
     let api_source: String?
-    let five_hour: UsageWindow
-    let seven_day: UsageWindow
-    let overage: UsageWindow
-    let primary_claim: String?
+    let limits: [UsageLimit]?
     let error: String?
     let auth_expired: Bool?
     let network_wait: Bool?
+
+    // Fixed basis for the MIN pill and the menu bar gauge.
+    var weekly: UsageLimit? { limits?.first { $0.id == "weekly" } ?? limits?.first }
 }
 
 struct UkiConfig: Codable {
@@ -676,9 +679,9 @@ struct MaxView: View {
                         (NSApp.delegate as? AppDelegate)?.handleReLogin()
                     })
                 } else {
-                    MetricRow(label: "5H",  subtitle: "活動限界", util: s.five_hour.utilization ?? 0, resetAt: s.five_hour.reset_at, now: loader.now, hasError: false)
-                    MetricRow(label: "7D",  subtitle: "週間限界", util: s.seven_day.utilization ?? 0, resetAt: s.seven_day.reset_at, now: loader.now, hasError: false)
-                    MetricRow(label: "OVR", subtitle: "暴走",     util: s.overage.utilization   ?? 0, resetAt: s.overage.reset_at,   now: loader.now, hasError: false)
+                    ForEach(s.limits ?? [], id: \.id) { l in
+                        MetricRow(label: l.id, subtitle: l.label, util: l.utilization ?? 0, resetAt: l.reset_at, now: loader.now, hasError: false)
+                    }
                 }
             } else {
                 Text(loader.loadError ?? "同期中…")
@@ -711,7 +714,7 @@ struct MinView: View {
     var body: some View {
         let networkWait = loader.state?.network_wait == true
         let hasError = loader.state?.error != nil
-        let util = loader.state?.five_hour.utilization ?? 0
+        let util = loader.state?.weekly?.utilization ?? 0
         let remaining = max(0, min(100, Int((1 - util) * 100 + 0.5)))
         let errTag: String = {
             guard let err = loader.state?.error else { return "Err" }
@@ -832,15 +835,13 @@ private func hexTracePath(_ v: [NSPoint], _ frac: CGFloat) -> NSBezierPath {
     return p
 }
 
-// The menu bar gauge always reads the 5h window, matching the MIN panel view.
-// Earlier versions followed the API's `primary_claim`, which switches to 7d
-// whenever the weekly window is the tighter one — the reading then silently
-// changed basis (5h at 0% but the icon drawing 76%). Fixed basis, always 5h;
-// the 7d and overage rows stay in the MAX view. nil when there's no usable
-// reading (error / network-wait) -> icon shows an idle look.
+// The menu bar gauge always reads the weekly all-model limit, matching the MIN
+// panel view. A gauge that follows whichever limit is tighter silently changes
+// basis, so the basis stays fixed; per-model rows like Fable stay in the MAX
+// view. nil when there's no usable reading (error / network-wait) -> idle look.
 func representativeUtil(_ s: UsageState?) -> Double? {
     guard let s, s.network_wait != true, s.error == nil else { return nil }
-    return s.five_hour.utilization
+    return s.weekly?.utilization
 }
 
 private func drawMenuGlyph(_ style: String, util: Double?, color: NSColor) {

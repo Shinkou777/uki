@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Claude usage monitor daemon.
 
-Polls Anthropic API rate-limit response headers and writes the current
-5h / 7d / overage window state to ~/.uki/state.json.
+Reads the subscription usage that Claude Code's /usage shows (the weekly
+limit for all models, plus per-model weekly limits such as Fable) and writes
+it to ~/.uki/state.json as a list of limits.
 
 Adaptive polling:
   - active on AC      -> every 90 sec
@@ -34,6 +35,9 @@ STATE = ROOT / "state.json"
 LOG = ROOT / "monitor.log"
 
 API_URL = "https://api.anthropic.com/v1/messages"
+# The endpoint behind Claude Code's /usage. Since 2026-10 the subscription has
+# no 5h window; this returns the weekly limits as a `limits` list.
+USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 KEYCHAIN_SERVICE = "Claude Code-credentials"
 MODEL = "claude-haiku-4-5"
 
@@ -217,27 +221,17 @@ def pick_interval() -> tuple[int, str]:
     return INTERVAL_ACTIVE_AC, "active on AC"
 
 
-def _do_fetch(token: str) -> dict:
-    body = json.dumps(
-        {
-            "model": MODEL,
-            "max_tokens": 1,
-            "messages": [{"role": "user", "content": "."}],
-        }
-    ).encode()
+def _do_fetch_usage(token: str) -> dict:
     req = urllib.request.Request(
-        API_URL,
-        data=body,
-        method="POST",
+        USAGE_URL,
         headers={
             "Authorization": f"Bearer {token}",
-            "anthropic-version": "2023-06-01",
             "anthropic-beta": "oauth-2025-04-20",
-            "content-type": "application/json",
+            "User-Agent": OAUTH_USER_AGENT,
         },
     )
     with urllib.request.urlopen(req, timeout=15) as resp:
-        return {k.lower(): v for k, v in resp.headers.items()}
+        return json.loads(resp.read().decode())
 
 
 def _do_fetch_apikey(api_key: str) -> dict:
@@ -260,34 +254,65 @@ def _do_fetch_apikey(api_key: str) -> dict:
         return {k.lower(): v for k, v in resp.headers.items()}
 
 
-def _parse_claude_headers(headers: dict) -> dict:
-    def num(k, conv=float):
-        v = headers.get(k)
-        try:
-            return conv(v) if v is not None else None
-        except (ValueError, TypeError):
-            return None
+def _iso_to_epoch(value):
+    """"2026-11-06T13:00:00.820801+00:00" -> epoch seconds. Python 3.9's
+    fromisoformat takes neither "Z" nor odd fraction lengths, so drop both."""
+    if not value:
+        return None
+    try:
+        v = re.sub(r"\.\d+", "", str(value).replace("Z", "+00:00"))
+        return int(datetime.fromisoformat(v).timestamp())
+    except ValueError:
+        return None
 
+
+def _limit_row(item: dict) -> dict:
+    kind = item.get("kind") or ""
+    scope = item.get("scope") or {}
+    name = None
+    for key in ("model", "surface"):
+        part = scope.get(key) or {}
+        if part.get("display_name"):
+            name = part["display_name"]
+            break
+    if kind == "weekly_all":
+        rid, label = "weekly", "週間限界"
+    elif name:
+        rid, label = f"{kind}:{name.lower()}", f"{name} 限界"
+    else:
+        rid, label = kind, kind
+    pct = item.get("percent")
     return {
-        "fetched_at": int(time.time()),
-        "api_source": "claude",
-        "five_hour": {
-            "utilization": num("anthropic-ratelimit-unified-5h-utilization"),
-            "reset_at": num("anthropic-ratelimit-unified-5h-reset", int),
-            "status": headers.get("anthropic-ratelimit-unified-5h-status"),
-        },
-        "seven_day": {
-            "utilization": num("anthropic-ratelimit-unified-7d-utilization"),
-            "reset_at": num("anthropic-ratelimit-unified-7d-reset", int),
-            "status": headers.get("anthropic-ratelimit-unified-7d-status"),
-        },
-        "overage": {
-            "utilization": num("anthropic-ratelimit-unified-overage-utilization"),
-            "reset_at": num("anthropic-ratelimit-unified-overage-reset", int),
-            "status": headers.get("anthropic-ratelimit-unified-overage-status"),
-        },
-        "primary_claim": headers.get("anthropic-ratelimit-unified-representative-claim"),
+        "id": rid,
+        "label": label,
+        "utilization": pct / 100 if isinstance(pct, (int, float)) else None,
+        "reset_at": _iso_to_epoch(item.get("resets_at")),
     }
+
+
+def _parse_usage(body: dict) -> dict:
+    rows = [_limit_row(it) for it in body.get("limits") or [] if isinstance(it, dict)]
+    spend = body.get("spend") or {}
+    if spend.get("enabled") and isinstance(spend.get("percent"), (int, float)):
+        rows.append({"id": "overage", "label": "暴走",
+                     "utilization": spend["percent"] / 100, "reset_at": None})
+    return {"fetched_at": int(time.time()), "api_source": "claude", "limits": rows}
+
+
+def _parse_claude_headers(headers: dict) -> dict:
+    """API-key mode: only the weekly window still comes back as headers."""
+    rows = []
+    try:
+        u = float(headers["anthropic-ratelimit-unified-7d-utilization"])
+    except (KeyError, ValueError, TypeError):
+        u = None
+    if u is not None:
+        try:
+            r = int(headers.get("anthropic-ratelimit-unified-7d-reset"))
+        except (ValueError, TypeError):
+            r = None
+        rows.append({"id": "weekly", "label": "週間限界", "utilization": u, "reset_at": r})
+    return {"fetched_at": int(time.time()), "api_source": "claude", "limits": rows}
 
 
 def fetch_usage() -> dict:
@@ -308,14 +333,12 @@ def fetch_usage() -> dict:
                 raise
         return _parse_claude_headers(headers)
 
-    # claude_oauth (default) — original keychain-based flow
+    # claude_oauth (default) — keychain token, same usage endpoint as /usage
     token = get_oauth_token()
     try:
-        headers = _do_fetch(token)
+        body = _do_fetch_usage(token)
     except urllib.error.HTTPError as e:
-        if e.code == 429:
-            headers = {k.lower(): v for k, v in e.headers.items()}
-        elif e.code == 401:
+        if e.code == 401:
             log("HTTP 401: refreshing OAuth token and retrying")
             try:
                 new_token = refresh_oauth_token()
@@ -334,17 +357,14 @@ def fetch_usage() -> dict:
                 log(f"refresh failed: {type(refresh_err).__name__}: {refresh_err}")
                 raise AuthExpired(str(refresh_err))
             try:
-                headers = _do_fetch(new_token)
+                body = _do_fetch_usage(new_token)
             except urllib.error.HTTPError as retry_err:
-                if retry_err.code == 429:
-                    headers = {k.lower(): v for k, v in retry_err.headers.items()}
-                else:
-                    log(f"HTTP {retry_err.code} after refresh: {retry_err.reason}")
-                    raise
+                log(f"HTTP {retry_err.code} after refresh: {retry_err.reason}")
+                raise
         else:
             log(f"HTTP {e.code}: {e.reason}")
             raise
-    return _parse_claude_headers(headers)
+    return _parse_usage(body)
 
 
 def write_state(state: dict) -> None:
@@ -435,10 +455,7 @@ def _network_wait_state(interval: int, tries: int) -> dict:
         "network_wait": True,
         "error": None,
         "auth_expired": False,
-        "five_hour": {"utilization": None, "reset_at": None, "status": None},
-        "seven_day": {"utilization": None, "reset_at": None, "status": None},
-        "overage": {"utilization": None, "reset_at": None, "status": None},
-        "primary_claim": None,
+        "limits": [],
         "next_poll_in_sec": interval,
         "poll_reason": f"network-wait #{tries}",
     }
@@ -484,9 +501,8 @@ def loop() -> None:
             state["next_poll_in_sec"] = interval
             state["poll_reason"] = why
             write_state(state)
-            u5 = state["five_hour"]["utilization"] or 0
-            u7 = state["seven_day"]["utilization"] or 0
-            log(f"5h={u5:.0%} 7d={u7:.0%} -> sleep {interval}s ({why})")
+            usage = " ".join(f"{r['id']}={(r['utilization'] or 0):.0%}" for r in state["limits"])
+            log(f"{usage or 'no limits'} -> sleep {interval}s ({why})")
         except Exception as e:
             # Transient connectivity failure that slipped past the gate (DNS
             # resolved but the TLS connect dropped, etc.) — treat as network-wait,
@@ -514,10 +530,7 @@ def loop() -> None:
                 "api_source": "claude",
                 "error": f"{type(e).__name__}: {e}",
                 "auth_expired": auth_expired,
-                "five_hour": {"utilization": None, "reset_at": None, "status": None},
-                "seven_day": {"utilization": None, "reset_at": None, "status": None},
-                "overage": {"utilization": None, "reset_at": None, "status": None},
-                "primary_claim": None,
+                "limits": [],
                 "next_poll_in_sec": interval,
                 "poll_reason": f"backoff #{consecutive_errors}" + (" (auth)" if auth_expired else ""),
             })

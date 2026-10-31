@@ -4,20 +4,24 @@
 
 浮子是 macOS 常驻的 Claude 用量浮窗。
 
-Uki (浮子) is an EVA NERV-styled macOS desktop HUD that shows your current Claude API rate-limit usage in real time. It starts at login and gets out of the way when you don't need it.
+Uki (浮子) is an EVA NERV-styled macOS desktop HUD that shows your current Claude subscription usage in real time. It starts at login and gets out of the way when you don't need it.
 
 ![max view](docs/screenshots/max.png)
 ![min view](docs/screenshots/min.png)
 
 ## What it shows
 
-- **活動限界 (5h window)**: rolling 5-hour usage
-- **当月限界 (7d window)**: weekly cap
-- **暴走 (overage)**: optional pay-as-you-go overage if you have it enabled
-- Time remaining until each window resets
-- One-click minimize to a tiny pill that stays out of the way
+The same limits Claude Code's `/usage` shows:
 
-A Python daemon polls Anthropic's API headers and writes state to a local file; the SwiftUI app reads that file and renders.
+- **週間限界**: the weekly limit for all models
+- **Fable 限界**: the separate weekly limit for Fable (any other per-model weekly limit Claude reports gets its own row too)
+- **暴走 (overage)**: usage credits, shown only when you have them turned on
+- Time remaining until each limit resets
+- One-click minimize to a tiny pill that stays out of the way; the pill and the menu bar gauge follow the weekly all-model limit
+
+Claude subscriptions no longer have a 5-hour window (since 2026-10), so Uki no longer shows one.
+
+A Python daemon reads the usage endpoint with Claude Code's sign-in and writes state to a local file; the SwiftUI app reads that file and renders.
 
 ## Requirements
 
@@ -76,7 +80,7 @@ A signed + notarized release is on the roadmap (requires $99/yr Apple Developer 
 
 ```
 Anthropic API
-     │  (rate-limit headers)
+     │  (/api/oauth/usage, the endpoint behind /usage)
      ▼
 ~/.uki/bin/monitor.py
      │  (writes JSON every 3-30 min, adaptive)

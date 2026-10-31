@@ -30,13 +30,11 @@ def main():
         sys.exit(1)
     s = json.loads(STATE.read_text())
     age = int(time.time()) - s["fetched_at"]
-    print(f"  Updated {age}s ago  primary={s.get('primary_claim','?')}\n")
-    rows = [("5h window", "five_hour"), ("7d window", "seven_day"), ("Overage  ", "overage")]
-    for label, key in rows:
-        d = s[key]
+    print(f"  Updated {age}s ago\n")
+    for d in s.get("limits") or []:
         u = d.get("utilization") or 0
         r = d.get("reset_at")
-        print(f"  {label}  [{bar(u)}] {u*100:>5.1f}%   resets in {fmt_remaining(r)}")
+        print(f"  {d['id']:<20}  [{bar(u)}] {u*100:>5.1f}%   resets in {fmt_remaining(r)}")
 
 
 if __name__ == "__main__":
