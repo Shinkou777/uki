@@ -6,8 +6,7 @@ limit for all models, plus per-model weekly limits such as Fable) and writes
 it to ~/.uki/state.json as a list of limits.
 
 Adaptive polling:
-  - active on AC      -> every 90 sec
-  - active on battery -> every 3 min
+  - active            -> every 5 min (the usage endpoint rate-limits; see below)
   - idle (>10 min)    -> every 30 min (but wakes immediately when you return)
   - battery < 30%     -> every 30 min
 
@@ -57,8 +56,8 @@ OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 # platform.claude.com rejects refresh requests without a claude-cli UA (HTTP 403).
 OAUTH_USER_AGENT = "claude-cli/2.1.133 (external, cli)"
 
-INTERVAL_ACTIVE_AC = 90
-INTERVAL_ACTIVE_BATT = 180
+INTERVAL_ACTIVE_AC = 300
+INTERVAL_ACTIVE_BATT = 300
 INTERVAL_IDLE = 1800
 INTERVAL_LOW_BATTERY = 1800
 IDLE_THRESHOLD_SEC = 600
@@ -76,6 +75,18 @@ BACKOFF_MAX_AUTH = 900
 NETWORK_WAIT_RETRY = 8       # fast retry while waiting for the network to return
 NETWORK_WAIT_RETRY_MAX = 30  # back off the wait a little if it persists
 NETWORK_WAIT_FAST_TRIES = 8  # how many fast tries before slowing to the max
+
+
+# /api/oauth/usage allows roughly one call every two minutes per account (Claude
+# Code's own /usage calls count against it too) and answers 429 with
+# Retry-After: 0. Weekly numbers move slowly, so on a 429 the last reading stays
+# on screen and we retry later instead of showing an error.
+RATE_LIMIT_RETRY = 120
+RATE_LIMIT_RETRY_MAX = 600
+
+
+class RateLimited(Exception):
+    """The usage endpoint answered 429."""
 
 
 class AuthExpired(Exception):
@@ -338,6 +349,8 @@ def fetch_usage() -> dict:
     try:
         body = _do_fetch_usage(token)
     except urllib.error.HTTPError as e:
+        if e.code == 429:
+            raise RateLimited()
         if e.code == 401:
             log("HTTP 401: refreshing OAuth token and retrying")
             try:
@@ -359,6 +372,8 @@ def fetch_usage() -> dict:
             try:
                 body = _do_fetch_usage(new_token)
             except urllib.error.HTTPError as retry_err:
+                if retry_err.code == 429:
+                    raise RateLimited()
                 log(f"HTTP {retry_err.code} after refresh: {retry_err.reason}")
                 raise
         else:
@@ -461,6 +476,18 @@ def _network_wait_state(interval: int, tries: int) -> dict:
     }
 
 
+def _load_last_good():
+    """The last successful reading on disk, so a monitor restart that lands on
+    a 429 still has numbers to keep showing."""
+    try:
+        s = json.loads(STATE.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+    if s.get("limits") and not s.get("error") and not s.get("network_wait"):
+        return s
+    return None
+
+
 def _notify_auth_expired() -> None:
     try:
         subprocess.run([
@@ -477,6 +504,8 @@ def loop() -> None:
     consecutive_errors = 0
     auth_notified = False
     net_wait_count = 0
+    rate_limited_count = 0
+    last_good = _load_last_good()
     while True:
         interval = 300
 
@@ -496,13 +525,22 @@ def loop() -> None:
         try:
             state = fetch_usage()
             consecutive_errors = 0
+            rate_limited_count = 0
             auth_notified = False
             interval, why = pick_interval()
             state["next_poll_in_sec"] = interval
             state["poll_reason"] = why
             write_state(state)
+            last_good = state
             usage = " ".join(f"{r['id']}={(r['utilization'] or 0):.0%}" for r in state["limits"])
             log(f"{usage or 'no limits'} -> sleep {interval}s ({why})")
+        except RateLimited:
+            rate_limited_count += 1
+            interval = min(RATE_LIMIT_RETRY * 2 ** (rate_limited_count - 1), RATE_LIMIT_RETRY_MAX)
+            log(f"429 rate limited, keeping last reading (#{rate_limited_count}, retry {interval}s)")
+            if last_good:
+                write_state({**last_good, "next_poll_in_sec": interval,
+                             "poll_reason": f"rate-limited #{rate_limited_count}"})
         except Exception as e:
             # Transient connectivity failure that slipped past the gate (DNS
             # resolved but the TLS connect dropped, etc.) — treat as network-wait,

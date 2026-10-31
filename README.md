@@ -83,7 +83,7 @@ Anthropic API
      │  (/api/oauth/usage, the endpoint behind /usage)
      ▼
 ~/.uki/bin/monitor.py
-     │  (writes JSON every 3-30 min, adaptive)
+     │  (writes JSON every 5-30 min, adaptive)
      ▼
 ~/.uki/state.json
      │  (read every 15s)
@@ -91,7 +91,7 @@ Anthropic API
 /Applications/Uki.app   ← SwiftUI, this repo's src/uki.swift
 ```
 
-The monitor adapts polling cadence based on system state: 3 min on AC, 5 min on battery, 30 min when idle (>10 min) or low battery (<30%). On wake from sleep, the app sends `SIGUSR1` to force an immediate refresh.
+The monitor polls every 5 min while you're active and every 30 min when idle (>10 min) or on low battery (<30%). The usage endpoint allows roughly one call every two minutes per account, so when it answers 429 Uki keeps showing the last reading and retries on its own. On wake from sleep, the app sends `SIGUSR1` to force an immediate refresh.
 
 ## Customizing
 

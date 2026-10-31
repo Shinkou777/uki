@@ -108,7 +108,7 @@ func shortErrorLabel(_ err: String) -> String {
     if err.range(of: #"5\d\d"#, options: .regularExpression) != nil { return "サーバ異常" }
     if err.localizedCaseInsensitiveContains("timed out") || err.localizedCaseInsensitiveContains("timeout") { return "応答なし" }
     if err.localizedCaseInsensitiveContains("urlerror") || err.localizedCaseInsensitiveContains("connection") { return "接続失敗" }
-    if err.localizedCaseInsensitiveContains("httperror") { return "HTTP エラー" }
+    if err.localizedCaseInsensitiveContains("httperror") { return "通信異常" }
     return "信号異常"
 }
 
@@ -298,7 +298,6 @@ struct MetricRow: View {
     let util: Double
     let resetAt: Int?
     let now: Date
-    let hasError: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -313,9 +312,9 @@ struct MetricRow: View {
                     .font(lcd(10))
                     .foregroundStyle(Color(white: 0.5))
                     .fixedSize()
-                Text(hasError ? "  Err" : String(format: "%05.1f%%", util * 100))
+                Text(String(format: "%05.1f%%", util * 100))
                     .font(lcd(13))
-                    .foregroundStyle(hasError ? Eva.red : severity(util))
+                    .foregroundStyle(severity(util))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
                     .overlay(Rectangle().stroke(Color.white.opacity(0.85), lineWidth: 1))
@@ -378,7 +377,7 @@ func errorAdvice(_ err: String, authExpired: Bool = false) -> ErrorAdvice {
     }
     if err.contains("429") {
         return ErrorAdvice(
-            explanation: "10〜15 分後に右上の「新」を押す",
+            explanation: "混雑中。自動で再取得します",
             commands: []
         )
     }
@@ -587,11 +586,11 @@ struct MaxView: View {
                 let age = max(0, Int(loader.now.timeIntervalSince1970) - s.fetched_at)
                 let stale = s.error != nil
                 HStack(spacing: 2) {
-                    Text("\(age)")
+                    Text("\(age < 60 ? age : age / 60)")
                         .font(lcd(10))
                         .foregroundStyle((stale ? Eva.red : Color.white).opacity(0.7))
                         .fixedSize()
-                    Text("秒前")
+                    Text(age < 60 ? "秒前" : "分前")
                         .font(mincho(10))
                         .foregroundStyle((stale ? Eva.red : Color.white).opacity(0.7))
                         .fixedSize()
@@ -687,7 +686,7 @@ struct MaxView: View {
                     })
                 } else {
                     ForEach(s.limits ?? [], id: \.id) { l in
-                        MetricRow(label: l.id, subtitle: l.label, util: l.utilization ?? 0, resetAt: l.reset_at, now: loader.now, hasError: false)
+                        MetricRow(label: l.id, subtitle: l.label, util: l.utilization ?? 0, resetAt: l.reset_at, now: loader.now)
                     }
                 }
             } else {
@@ -724,11 +723,11 @@ struct MinView: View {
         let util = loader.state?.weekly?.utilization ?? 0
         let remaining = max(0, min(100, Int((1 - util) * 100 + 0.5)))
         let errTag: String = {
-            guard let err = loader.state?.error else { return "Err" }
+            guard let err = loader.state?.error else { return "異常" }
             if loader.state?.auth_expired == true || err.contains("401") { return "認証" }
             if err.localizedCaseInsensitiveContains("timeout") || err.localizedCaseInsensitiveContains("urlerror") || err.localizedCaseInsensitiveContains("connection") { return "接続" }
             if err.range(of: #"5\d\d"#, options: .regularExpression) != nil { return "障害" }
-            return "Err"
+            return "異常"
         }()
         // tag color: amber while merely waiting for the network, red for real errors
         let statusTag = networkWait ? "待機" : errTag
