@@ -11,15 +11,16 @@ Uki (浮子) is an EVA NERV-styled macOS desktop HUD that shows your current Cla
 
 ## What it shows
 
-The same limits Claude Code's `/usage` shows:
+The same limits Claude Code's `/usage` shows, one row each:
 
+- **活動限界**: the 5-hour session limit. Pro, Max and Team have it, and so do Ultra accounts until they are verified; verified Ultra accounts have none, so the row isn't there
 - **週間限界**: the weekly limit for all models
-- **Fable 限界**: the separate weekly limit for Fable (any other per-model weekly limit Claude reports gets its own row too)
+- **Fable 限界**: the separate weekly limit for Fable, on plans that have one (any other per-model weekly limit Claude reports gets its own row too)
 - **暴走 (overage)**: usage credits, shown only when you have them turned on
 - Time remaining until each limit resets
-- One-click minimize to a tiny pill that stays out of the way; the pill and the menu bar gauge follow the weekly all-model limit
+- One-click minimize to a tiny pill that stays out of the way; the pill and the menu bar gauge follow the 5-hour limit when you have one, otherwise the weekly all-model limit
 
-Claude subscriptions no longer have a 5-hour window (since 2026-10), so Uki no longer shows one.
+Uki doesn't look at your plan name. The server says which limits apply to your account, so an upgrade, a downgrade or Ultra verification shows up on the next refresh and the panel grows or shrinks to fit.
 
 A Python daemon reads the usage endpoint with Claude Code's sign-in and writes state to a local file; the SwiftUI app reads that file and renders.
 

@@ -5,8 +5,9 @@ import SwiftUI
 
 // MARK: - Data
 
-// One row of Claude's /usage: the weekly limit for all models ("weekly"), or a
-// per-model weekly limit such as Fable. monitor.py writes the label.
+// One row of Claude's /usage: the 5-hour session limit ("session"), the weekly
+// limit for all models ("weekly"), or a per-model weekly limit such as Fable.
+// Which rows exist is up to the server per account. monitor.py writes the label.
 struct UsageLimit: Decodable {
     let id: String
     let label: String
@@ -22,8 +23,11 @@ struct UsageState: Decodable {
     let auth_expired: Bool?
     let network_wait: Bool?
 
-    // Fixed basis for the MIN pill and the menu bar gauge.
-    var weekly: UsageLimit? { limits?.first { $0.id == "weekly" } ?? limits?.first }
+    // Basis for the MIN pill and the menu bar gauge: the 5-hour session limit
+    // when the account has one, otherwise the weekly all-model limit.
+    var basis: UsageLimit? {
+        limits?.first { $0.id == "session" } ?? limits?.first { $0.id == "weekly" } ?? limits?.first
+    }
 }
 
 struct UkiConfig: Codable {
@@ -720,7 +724,7 @@ struct MinView: View {
     var body: some View {
         let networkWait = loader.state?.network_wait == true
         let hasError = loader.state?.error != nil
-        let util = loader.state?.weekly?.utilization ?? 0
+        let util = loader.state?.basis?.utilization ?? 0
         let remaining = max(0, min(100, Int((1 - util) * 100 + 0.5)))
         let errTag: String = {
             guard let err = loader.state?.error else { return "異常" }
@@ -841,13 +845,14 @@ private func hexTracePath(_ v: [NSPoint], _ frac: CGFloat) -> NSBezierPath {
     return p
 }
 
-// The menu bar gauge always reads the weekly all-model limit, matching the MIN
-// panel view. A gauge that follows whichever limit is tighter silently changes
-// basis, so the basis stays fixed; per-model rows like Fable stay in the MAX
-// view. nil when there's no usable reading (error / network-wait) -> idle look.
+// The menu bar gauge reads the same basis as the MIN pill: the 5-hour session
+// limit if the account has one, else the weekly all-model limit. It never
+// follows whichever limit is tighter (that silently changed basis before);
+// the other rows stay in the MAX view. nil when there's no usable reading
+// (error / network-wait) -> idle look.
 func representativeUtil(_ s: UsageState?) -> Double? {
     guard let s, s.network_wait != true, s.error == nil else { return nil }
-    return s.weekly?.utilization
+    return s.basis?.utilization
 }
 
 private func drawMenuGlyph(_ style: String, util: Double?, color: NSColor) {

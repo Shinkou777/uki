@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Claude usage monitor daemon.
 
-Reads the subscription usage that Claude Code's /usage shows (the weekly
-limit for all models, plus per-model weekly limits such as Fable) and writes
-it to ~/.uki/state.json as a list of limits.
+Reads the subscription usage that Claude Code's /usage shows and writes it to
+~/.uki/state.json as a list of limits. Which limits apply is the server's call
+per account: Pro, Max, Team and not-yet-verified Ultra accounts have the
+5-hour session limit; verified Ultra accounts (since 2026-10-30) have only the
+weekly limits (all models, plus Fable). A plan change or verification shows
+up in the next reply, so nothing here keys off the plan name.
 
 Adaptive polling:
   - active            -> every 5 min (the usage endpoint rate-limits; see below)
@@ -34,8 +37,9 @@ STATE = ROOT / "state.json"
 LOG = ROOT / "monitor.log"
 
 API_URL = "https://api.anthropic.com/v1/messages"
-# The endpoint behind Claude Code's /usage. Since 2026-10 the subscription has
-# no 5h window; this returns the weekly limits as a `limits` list.
+# The endpoint behind Claude Code's /usage. Its `limits` list holds exactly the
+# meters that apply to this account, classified by `kind`: "session" (5 hours),
+# "weekly_all", "weekly_scoped" (a model such as Fable, or a surface).
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 KEYCHAIN_SERVICE = "Claude Code-credentials"
 MODEL = "claude-haiku-4-5"
@@ -286,7 +290,9 @@ def _limit_row(item: dict) -> dict:
         if part.get("display_name"):
             name = part["display_name"]
             break
-    if kind == "weekly_all":
+    if kind == "session":
+        rid, label = "session", "活動限界"
+    elif kind == "weekly_all":
         rid, label = "weekly", "週間限界"
     elif name:
         rid, label = f"{kind}:{name.lower()}", f"{name} 限界"
@@ -531,6 +537,10 @@ def loop() -> None:
             state["next_poll_in_sec"] = interval
             state["poll_reason"] = why
             write_state(state)
+            ids = [r["id"] for r in state["limits"]]
+            if last_good is not None and ids != [r["id"] for r in last_good.get("limits", [])]:
+                old = [r["id"] for r in last_good.get("limits", [])]
+                log(f"limits changed {old} -> {ids} (plan or verification changed)")
             last_good = state
             usage = " ".join(f"{r['id']}={(r['utilization'] or 0):.0%}" for r in state["limits"])
             log(f"{usage or 'no limits'} -> sleep {interval}s ({why})")
